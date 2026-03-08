@@ -55,6 +55,23 @@ Why the chosen stack:
 - `docs/mvp-scope.md`: MVP in/out scope and success criteria.
 - `docs/roadmap.md`: phased delivery plan and dependency order.
 
+## Workspace scaffold
+
+Current monorepo layout:
+
+- `apps/cli`
+- `apps/web`
+- `packages/core`
+- `packages/db`
+- `packages/tunnel`
+
+Common commands:
+
+- `pnpm install`
+- `pnpm -r build`
+- `pnpm -r test`
+- `pnpm -r typecheck`
+
 ## First implementation target
 
 Vertical slice: `orqis init` boots a local web runtime, starts a tunnel adapter, verifies reachability, and returns a usable public URL.
