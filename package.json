@@ -10,11 +10,11 @@
   "scripts": {
     "build": "pnpm -r build",
     "smoke:workspace": "pnpm -r test",
+    "smoke:filtered": "pnpm --filter @orqis/cli test && pnpm --filter @orqis/cli typecheck",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   }
