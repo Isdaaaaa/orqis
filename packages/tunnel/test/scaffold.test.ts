@@ -211,6 +211,56 @@ describe("@orqis/tunnel", () => {
     expect(process.killSignals).toEqual(["SIGTERM"]);
   });
 
+  it("fails ngrok discovery when API tunnels do not target the requested local runtime", async () => {
+    const process = new FakeChildProcess();
+    const spawnProcess = vi.fn(() => process.asChildProcess());
+    const fetchImpl = vi
+      .fn<(input: string | URL | Request, init?: RequestInit) => Promise<Response>>()
+      .mockImplementation(async () => {
+        return new Response(
+          JSON.stringify({
+            tunnels: [
+              {
+                public_url: "https://wrong-host.ngrok-free.app",
+                proto: "https",
+                config: {
+                  addr: "http://10.0.0.5:43110",
+                },
+              },
+              {
+                public_url: "https://wrong-port.ngrok-free.app",
+                proto: "https",
+                config: {
+                  addr: "http://127.0.0.1:43111",
+                },
+              },
+            ],
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json; charset=utf-8",
+            },
+          },
+        );
+      });
+
+    await expect(
+      createNgrokTunnelAdapter({
+        discoveryPollIntervalMs: 1,
+        discoveryTimeoutMs: 30,
+        fetchImpl,
+        sleep: async () => undefined,
+        spawnProcess,
+      }).start({
+        localUrl: "http://127.0.0.1:43110",
+      }),
+    ).rejects.toThrowError(/ngrok did not expose a public URL via its local API/);
+
+    expect(fetchImpl).toHaveBeenCalled();
+    expect(process.killSignals).toEqual(["SIGTERM"]);
+  });
+
   it("accepts optional cloudflare public URL override without spawning process", async () => {
     vi.stubEnv(
       ORQIS_CLOUDFLARE_PUBLIC_URL_ENV_VAR,
