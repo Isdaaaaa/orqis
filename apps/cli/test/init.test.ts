@@ -7,8 +7,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { runCli } from "../src/cli.ts";
 import {
   DEFAULT_ORQIS_CONFIG,
+  ORQIS_CONFIG_DIR_ENV_VAR,
   ORQIS_CONFIG_FILE_NAME,
   bootstrapOrqisConfig,
+  resolveOrqisConfigDir,
 } from "../src/config.ts";
 
 const tempRoots: string[] = [];
@@ -21,6 +23,7 @@ async function makeTempDir(prefix: string): Promise<string> {
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 
   for (const root of tempRoots.splice(0)) {
     await rm(root, { recursive: true, force: true });
@@ -81,6 +84,30 @@ describe("orqis init config bootstrap", () => {
         token: "secret",
       },
     });
+  });
+
+  it("fails fast when required config sections have invalid shape", async () => {
+    const configDir = await makeTempDir("orqis-init-invalid-shape-");
+    const configPath = join(configDir, ORQIS_CONFIG_FILE_NAME);
+
+    await writeFile(`${configPath}`, '{"schemaVersion":1,"runtime":null}\n');
+
+    await expect(
+      bootstrapOrqisConfig({ configDir }),
+    ).rejects.toThrowError(/"runtime" must be an object when provided/);
+  });
+
+  it("resolves config dir from ORQIS_CONFIG_DIR when no option is passed", async () => {
+    const configDir = await makeTempDir("orqis-init-env-dir-");
+
+    vi.stubEnv(ORQIS_CONFIG_DIR_ENV_VAR, configDir);
+
+    expect(resolveOrqisConfigDir()).toBe(configDir);
+
+    const result = await bootstrapOrqisConfig();
+
+    expect(result.status).toBe("created");
+    expect(result.configDir).toBe(configDir);
   });
 
   it("executes via `orqis init` command arguments", async () => {

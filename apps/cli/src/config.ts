@@ -51,6 +51,115 @@ function cloneValue<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+function valueType(value: unknown): string {
+  if (value === null) {
+    return "null";
+  }
+
+  if (Array.isArray(value)) {
+    return "array";
+  }
+
+  return typeof value;
+}
+
+function throwConfigShapeError(
+  configFilePath: string,
+  keyPath: string,
+  message: string,
+): never {
+  throw new Error(
+    `Invalid config file at ${configFilePath}: "${keyPath}" ${message}. Fix or remove "${keyPath}" and retry.`,
+  );
+}
+
+function validateRuntimeConfigShape(
+  config: Record<string, unknown>,
+  configFilePath: string,
+): void {
+  const runtime = config.runtime;
+
+  if (runtime === undefined) {
+    return;
+  }
+
+  if (!isRecord(runtime)) {
+    throwConfigShapeError(
+      configFilePath,
+      "runtime",
+      `must be an object when provided (received ${valueType(runtime)})`,
+    );
+  }
+
+  const host = runtime.host;
+  if (host !== undefined && typeof host !== "string") {
+    throwConfigShapeError(
+      configFilePath,
+      "runtime.host",
+      `must be a string when provided (received ${valueType(host)})`,
+    );
+  }
+
+  const port = runtime.port;
+  if (
+    port !== undefined &&
+    (typeof port !== "number" ||
+      !Number.isInteger(port) ||
+      port <= 0 ||
+      port > 65535)
+  ) {
+    throwConfigShapeError(
+      configFilePath,
+      "runtime.port",
+      `must be an integer between 1 and 65535 when provided (received ${valueType(port)})`,
+    );
+  }
+}
+
+function validateTunnelConfigShape(
+  config: Record<string, unknown>,
+  configFilePath: string,
+): void {
+  const tunnel = config.tunnel;
+
+  if (tunnel === undefined) {
+    return;
+  }
+
+  if (!isRecord(tunnel)) {
+    throwConfigShapeError(
+      configFilePath,
+      "tunnel",
+      `must be an object when provided (received ${valueType(tunnel)})`,
+    );
+  }
+
+  const providers = tunnel.providers;
+
+  if (providers === undefined) {
+    return;
+  }
+
+  if (
+    !Array.isArray(providers) ||
+    providers.some((provider) => typeof provider !== "string")
+  ) {
+    throwConfigShapeError(
+      configFilePath,
+      "tunnel.providers",
+      "must be an array of strings when provided",
+    );
+  }
+}
+
+function validateExistingConfigShape(
+  config: Record<string, unknown>,
+  configFilePath: string,
+): void {
+  validateRuntimeConfigShape(config, configFilePath);
+  validateTunnelConfigShape(config, configFilePath);
+}
+
 function mergeMissingDefaults(
   target: Record<string, unknown>,
   defaults: Record<string, unknown>,
@@ -98,6 +207,7 @@ export async function bootstrapOrqisConfig(
     }
 
     config = parsed;
+    validateExistingConfigShape(config, configFilePath);
     const updated = mergeMissingDefaults(
       config,
       cloneValue(DEFAULT_ORQIS_CONFIG) as Record<string, unknown>,
