@@ -171,6 +171,8 @@ describe("@orqis/db migration SQL", () => {
       "tasks_same_workspace_run_refs_update",
       "approvals_same_workspace_refs_insert",
       "approvals_same_workspace_refs_update",
+      "runs_workspace_ownership_update_guard",
+      "tasks_workspace_ownership_update_guard",
     ];
 
     for (const triggerName of expectedTriggers) {
@@ -373,6 +375,101 @@ describe("@orqis/db migration SQL", () => {
         ),
       ).toThrow(
         /approvals\.run_id must reference a run in the same project\/workspace/,
+      );
+    });
+  });
+
+  it("rejects ownership-key updates that would orphan linked run/task references", async () => {
+    await withDatabase((db) => {
+      db.run("INSERT INTO projects (id, slug, name) VALUES (?, ?, ?)", [
+        "p1",
+        "project-1",
+        "Project 1",
+      ]);
+      db.run("INSERT INTO projects (id, slug, name) VALUES (?, ?, ?)", [
+        "p2",
+        "project-2",
+        "Project 2",
+      ]);
+      db.run("INSERT INTO workspaces (id, project_id, name) VALUES (?, ?, ?)", [
+        "w1",
+        "p1",
+        "Workspace 1",
+      ]);
+      db.run("INSERT INTO workspaces (id, project_id, name) VALUES (?, ?, ?)", [
+        "w2",
+        "p2",
+        "Workspace 2",
+      ]);
+
+      db.run(
+        "INSERT INTO runs (id, project_id, workspace_id, status) VALUES (?, ?, ?, ?)",
+        ["r_msg", "p1", "w1", "planned"],
+      );
+      db.run(
+        "INSERT INTO messages (id, project_id, workspace_id, run_id, actor_type, content) VALUES (?, ?, ?, ?, ?, ?)",
+        ["m1", "p1", "w1", "r_msg", "user", "message"],
+      );
+      expect(() =>
+        db.run(
+          "UPDATE runs SET project_id = ?, workspace_id = ? WHERE id = ?",
+          ["p2", "w2", "r_msg"],
+        ),
+      ).toThrow(
+        /runs\.project_id\/workspace_id update would orphan linked messages/,
+      );
+
+      db.run(
+        "INSERT INTO runs (id, project_id, workspace_id, status) VALUES (?, ?, ?, ?)",
+        ["r_task", "p1", "w1", "planned"],
+      );
+      db.run(
+        "INSERT INTO tasks (id, project_id, workspace_id, run_id, title, state) VALUES (?, ?, ?, ?, ?, ?)",
+        ["t_run", "p1", "w1", "r_task", "Task run", "todo"],
+      );
+      expect(() =>
+        db.run(
+          "UPDATE runs SET project_id = ?, workspace_id = ? WHERE id = ?",
+          ["p2", "w2", "r_task"],
+        ),
+      ).toThrow(/runs\.project_id\/workspace_id update would orphan linked tasks/);
+
+      db.run(
+        "INSERT INTO runs (id, project_id, workspace_id, status) VALUES (?, ?, ?, ?)",
+        ["r_approval", "p1", "w1", "planned"],
+      );
+      db.run(
+        "INSERT INTO tasks (id, project_id, workspace_id, title, state) VALUES (?, ?, ?, ?, ?)",
+        ["t_approval", "p1", "w1", "Task approval", "todo"],
+      );
+      db.run(
+        "INSERT INTO approvals (id, project_id, workspace_id, task_id, run_id, status, requested_by_actor_type) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ["a_run", "p1", "w1", "t_approval", "r_approval", "pending", "user"],
+      );
+      expect(() =>
+        db.run(
+          "UPDATE runs SET project_id = ?, workspace_id = ? WHERE id = ?",
+          ["p2", "w2", "r_approval"],
+        ),
+      ).toThrow(
+        /runs\.project_id\/workspace_id update would orphan linked approvals/,
+      );
+
+      db.run(
+        "INSERT INTO tasks (id, project_id, workspace_id, title, state) VALUES (?, ?, ?, ?, ?)",
+        ["t_move", "p1", "w1", "Task move", "todo"],
+      );
+      db.run(
+        "INSERT INTO approvals (id, project_id, workspace_id, task_id, status, requested_by_actor_type) VALUES (?, ?, ?, ?, ?, ?)",
+        ["a_move", "p1", "w1", "t_move", "pending", "system"],
+      );
+      expect(() =>
+        db.run(
+          "UPDATE tasks SET project_id = ?, workspace_id = ? WHERE id = ?",
+          ["p2", "w2", "t_move"],
+        ),
+      ).toThrow(
+        /tasks\.project_id\/workspace_id update would orphan linked approvals/,
       );
     });
   });

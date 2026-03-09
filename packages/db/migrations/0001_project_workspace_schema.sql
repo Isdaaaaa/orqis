@@ -267,6 +267,54 @@ BEGIN
     );
 END;
 
+CREATE TRIGGER `runs_workspace_ownership_update_guard`
+BEFORE UPDATE OF `project_id`, `workspace_id` ON `runs`
+WHEN NEW.`project_id` != OLD.`project_id`
+  OR NEW.`workspace_id` != OLD.`workspace_id`
+BEGIN
+  SELECT RAISE(ABORT, 'runs.project_id/workspace_id update would orphan linked messages')
+  WHERE EXISTS (
+    SELECT 1
+    FROM `messages`
+    WHERE `run_id` = OLD.`id`
+      AND (`project_id` != NEW.`project_id` OR `workspace_id` != NEW.`workspace_id`)
+  );
+
+  SELECT RAISE(ABORT, 'runs.project_id/workspace_id update would orphan linked tasks')
+  WHERE EXISTS (
+    SELECT 1
+    FROM `tasks`
+    WHERE (
+      `run_id` = OLD.`id`
+      OR `checkout_run_id` = OLD.`id`
+      OR `execution_run_id` = OLD.`id`
+    )
+      AND (`project_id` != NEW.`project_id` OR `workspace_id` != NEW.`workspace_id`)
+  );
+
+  SELECT RAISE(ABORT, 'runs.project_id/workspace_id update would orphan linked approvals')
+  WHERE EXISTS (
+    SELECT 1
+    FROM `approvals`
+    WHERE `run_id` = OLD.`id`
+      AND (`project_id` != NEW.`project_id` OR `workspace_id` != NEW.`workspace_id`)
+  );
+END;
+
+CREATE TRIGGER `tasks_workspace_ownership_update_guard`
+BEFORE UPDATE OF `project_id`, `workspace_id` ON `tasks`
+WHEN NEW.`project_id` != OLD.`project_id`
+  OR NEW.`workspace_id` != OLD.`workspace_id`
+BEGIN
+  SELECT RAISE(ABORT, 'tasks.project_id/workspace_id update would orphan linked approvals')
+  WHERE EXISTS (
+    SELECT 1
+    FROM `approvals`
+    WHERE `task_id` = OLD.`id`
+      AND (`project_id` != NEW.`project_id` OR `workspace_id` != NEW.`workspace_id`)
+  );
+END;
+
 CREATE TABLE `audit_events` (
   `id` text PRIMARY KEY NOT NULL,
   `project_id` text NOT NULL,

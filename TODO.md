@@ -108,6 +108,11 @@ Safe to defer while Phase 2 starts:
   - Summary (follow-up): Added executable regression coverage for cross-workspace `run_id`, `checkout_run_id`, `execution_run_id`, `task_id`, and `approvals.run_id` mismatches.
   - Changed: `packages/db/migrations/0001_project_workspace_schema.sql`, `packages/db/src/schema.ts`, `packages/db/test/migrations.test.ts`, `TODO.md`.
 
+- [x] Guard run/task ownership-key updates from orphaning linked workspace references
+  - Summary: Added migration-level update guards that block `runs.project_id/workspace_id` and `tasks.project_id/workspace_id` changes when linked `messages`, `tasks`, or `approvals` rows would be left with mismatched project/workspace ownership.
+  - Summary (follow-up): Added executable regression coverage for orphaning update attempts on runs and tasks.
+  - Changed: `packages/db/migrations/0001_project_workspace_schema.sql`, `packages/db/test/migrations.test.ts`, `TODO.md`.
+
 #### Hardening before Phase 3
 
 Must finish before Phase 3:
