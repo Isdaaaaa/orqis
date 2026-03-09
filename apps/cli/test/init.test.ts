@@ -179,7 +179,9 @@ describe("orqis init config bootstrap", () => {
         configDir,
         targetSchemaVersion: 2,
       }),
-    ).rejects.toThrowError(/cannot migrate from 1 to 2; add migration handler/);
+    ).rejects.toThrowError(
+      /Config schema migrations are incomplete: missing handler for 1 -> 2\./,
+    );
   });
 
   it("fails fast when config contains invalid JSON", async () => {

@@ -29,6 +29,10 @@ export interface BootstrapOrqisConfigResult {
 
 export type OrqisConfigMigration = (config: Record<string, unknown>) => void;
 
+export const ORQIS_CONFIG_MIGRATIONS: Readonly<
+  Record<number, OrqisConfigMigration>
+> = Object.freeze({});
+
 interface BootstrapOrqisConfigOptions {
   configDir?: string;
   targetSchemaVersion?: number;
@@ -92,6 +96,23 @@ function createDefaultConfig(targetSchemaVersion: number): Record<string, unknow
     ...cloneValue(DEFAULT_ORQIS_CONFIG),
     schemaVersion: targetSchemaVersion,
   };
+}
+
+function assertCompleteMigrationChain(
+  targetSchemaVersion: number,
+  migrations: Readonly<Record<number, OrqisConfigMigration>>,
+): void {
+  for (
+    let schemaVersion = ORQIS_CONFIG_BASELINE_SCHEMA_VERSION;
+    schemaVersion < targetSchemaVersion;
+    schemaVersion += 1
+  ) {
+    if (migrations[schemaVersion] === undefined) {
+      throw new Error(
+        `Config schema migrations are incomplete: missing handler for ${schemaVersion} -> ${schemaVersion + 1}.`,
+      );
+    }
+  }
 }
 
 function throwConfigShapeError(
@@ -300,6 +321,8 @@ export async function bootstrapOrqisConfig(
   const targetSchemaVersion = resolveTargetSchemaVersion(
     options.targetSchemaVersion,
   );
+  const migrations = options.migrations ?? ORQIS_CONFIG_MIGRATIONS;
+  assertCompleteMigrationChain(targetSchemaVersion, migrations);
   const configDir = resolveOrqisConfigDir(options.configDir);
   const configFilePath = join(configDir, ORQIS_CONFIG_FILE_NAME);
   const defaultConfig = createDefaultConfig(targetSchemaVersion);
@@ -328,7 +351,7 @@ export async function bootstrapOrqisConfig(
       configFilePath,
       existingSchemaVersion,
       targetSchemaVersion,
-      options.migrations ?? {},
+      migrations,
     );
     validateExistingConfigShape(config, configFilePath);
     const updated = mergeMissingDefaults(
