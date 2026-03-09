@@ -506,6 +506,7 @@ describe("orqis init runtime bootstrap", () => {
   it("starts the runtime, waits for health, and returns URLs", async () => {
     const configDir = await makeTempDir("orqis-init-runtime-session-");
     let runtimeStopCalls = 0;
+    let tunnelStopCalls = 0;
 
     const session = await startOrqisInitSession(
       {
@@ -522,15 +523,35 @@ describe("orqis init runtime bootstrap", () => {
             },
           };
         },
+        startTunnel: async () => ({
+          provider: "cloudflare",
+          publicUrl: "https://orqis-127-0-0-1-43110.trycloudflare.com",
+          metadata: {
+            strategy: "cloudflare-first-fallback",
+            attemptedProviders: ["cloudflare"],
+          },
+          stop: async () => {
+            tunnelStopCalls += 1;
+          },
+        }),
       },
     );
 
     expect(session.status).toBe("created");
     expect(session.localUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     expect(session.healthUrl).toBe(`${session.localUrl}/health`);
+    expect(session.publicUrl).toBe(
+      "https://orqis-127-0-0-1-43110.trycloudflare.com",
+    );
+    expect(session.tunnelProvider).toBe("cloudflare");
+    expect(session.tunnelMetadata).toEqual({
+      strategy: "cloudflare-first-fallback",
+      attemptedProviders: ["cloudflare"],
+    });
 
     await session.runtime.stop();
     expect(runtimeStopCalls).toBe(1);
+    expect(tunnelStopCalls).toBe(1);
   });
 
   it("returns clear errors when the web runtime port is already in use", async () => {
@@ -639,9 +660,70 @@ describe("orqis init runtime bootstrap", () => {
     );
   });
 
+  it("stops the runtime and surfaces tunnel startup failures clearly", async () => {
+    const configDir = await makeTempDir("orqis-init-tunnel-failure-");
+    const error = vi.spyOn(console, "error").mockImplementation(() => {
+      return;
+    });
+    const stop = vi.fn(async () => {
+      return;
+    });
+
+    const exitCode = await runCli(
+      ["node", "orqis", "init", "--config-dir", configDir],
+      {
+        fetchImpl: async () =>
+          new Response(
+            JSON.stringify({
+              service: "@orqis/web",
+              status: "ok",
+              uptimeMs: 1,
+            }),
+            {
+              status: 200,
+              headers: {
+                "content-type": "application/json; charset=utf-8",
+              },
+            },
+          ),
+        startWebRuntime: async () => ({
+          baseUrl: "http://127.0.0.1:43110",
+          healthUrl: "http://127.0.0.1:43110/health",
+          stop,
+        }),
+        startTunnel: async () => {
+          throw {
+            attemptedProviders: ["cloudflare", "ngrok"],
+            failures: [
+              {
+                provider: "cloudflare",
+                message: "cloudflare unavailable",
+              },
+              {
+                provider: "ngrok",
+                message: "ngrok unavailable",
+              },
+            ],
+          };
+        },
+      },
+    );
+
+    expect(exitCode).toBe(1);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /Tunnel could not start for http:\/\/127\.0\.0\.1:43110\. Tried providers \[cloudflare,ngrok\]/,
+      ),
+    );
+  });
+
   it("executes via `orqis init` command arguments and reports runtime readiness", async () => {
     const configDir = await makeTempDir("orqis-init-cli-");
     const log = vi.spyOn(console, "log").mockImplementation(() => {
+      return;
+    });
+    const tunnelStop = vi.fn(async () => {
       return;
     });
 
@@ -657,6 +739,15 @@ describe("orqis init runtime bootstrap", () => {
       ],
       {
         startWebRuntime: async () => createTestRuntime(),
+        startTunnel: async () => ({
+          provider: "ngrok",
+          publicUrl: "https://orqis-mobile.ngrok-free.app",
+          metadata: {
+            strategy: "cloudflare-first-fallback",
+            attemptedProviders: ["cloudflare", "ngrok"],
+          },
+          stop: tunnelStop,
+        }),
         waitForShutdown: async (runtime) => {
           await runtime.stop();
         },
@@ -671,7 +762,18 @@ describe("orqis init runtime bootstrap", () => {
     expect(log).toHaveBeenCalledWith(
       expect.stringMatching(/^health_url=http:\/\/127\.0\.0\.1:\d+\/health$/),
     );
+    expect(log).toHaveBeenCalledWith(
+      "public_url=https://orqis-mobile.ngrok-free.app",
+    );
+    expect(log).toHaveBeenCalledWith("tunnel_provider=ngrok");
+    expect(log).toHaveBeenCalledWith(
+      "tunnel_strategy=cloudflare-first-fallback",
+    );
+    expect(log).toHaveBeenCalledWith(
+      "tunnel_attempted_providers=cloudflare,ngrok",
+    );
     expect(log).toHaveBeenCalledWith("web_runtime=ready");
+    expect(tunnelStop).toHaveBeenCalledTimes(1);
   });
 
   it("returns non-zero for invalid CLI arguments without throwing", async () => {
