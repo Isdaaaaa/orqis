@@ -36,6 +36,14 @@ Implement the `orqis init` vertical slice: local runtime boot + tunnel URL hando
 - [ ] Add bootstrap smoke test for `orqis init`
   - Acceptance criteria: automated test verifies config generation, runtime boot, and URL output contract.
 
+#### Hardening before Phase 2
+
+- [ ] Split the scaffold web runtime into a dedicated process before tunnel-provider lifecycle management lands
+- [ ] Tighten `orqis init --health-timeout-ms` validation to reject non-numeric suffix input (for example `10abc`)
+- [ ] Add CLI regression coverage that asserts `--health-timeout-ms` rejects non-numeric suffix input (for example `10abc`)
+- [ ] Add signal-shutdown test coverage for `waitForRuntimeShutdown` (listener cleanup and runtime stop invocation)
+- [ ] Implement managed `cloudflared`/`ngrok` process lifecycle and automatic URL discovery (remove manual `ORQIS_*_PUBLIC_URL` requirement)
+
 ## Phase 2: Projects and persistent workspaces
 
 - [ ] Create project/workspace schema and migrations

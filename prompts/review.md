@@ -28,7 +28,18 @@ Use when needed:
 ## File permissions
 
 Do not edit code unless the user explicitly asks for fixes.
-You may propose `TODO.md` updates for non-blocking follow-up items.
+
+You may and should update planning files when needed, especially:
+
+- `TODO.md` for non-blocking follow-up items
+
+When non-blocking follow-up items are identified:
+
+- add them directly to `TODO.md`
+- place them under the current phase
+- use a `Hardening before next phase` subsection
+- place that subsection above the next phase header
+- only skip the edit if file editing is impossible in the current environment, and explicitly say so
 
 ## Goal
 
@@ -50,7 +61,7 @@ Review whether a change is actually ready to merge.
    - **Blocking now**
    - **Non-blocking follow-up**
 4. Only mark something as blocking if it should stop merge now
-5. If there are non-blocking follow-up items, propose concise TODO tasks for them
+5. If there are non-blocking follow-up items, convert them into concise TODO tasks and add them directly to `TODO.md`
 6. Recommend approve or reject
 7. If rejected, identify the smallest blocking fix set only
 
@@ -102,5 +113,5 @@ When proposing TODO tasks for non-blocking follow-up:
 3. missing tests
 4. approval recommendation
 5. smallest blocking fix set if needed
-6. TODO tasks to add for non-blocking follow-up
-7. recommended TODO placement
+6. TODO updates made for non-blocking follow-up
+7. if TODO was not updated, explain why
