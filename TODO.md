@@ -47,7 +47,9 @@ Split the scaffold web runtime into a dedicated process to unblock managed tunne
 #### Hardening before Phase 2
 
 Must finish before Phase 2:
-- [ ] Split the scaffold web runtime into a dedicated process before tunnel-provider lifecycle management lands
+- [x] Split the scaffold web runtime into a dedicated process before tunnel-provider lifecycle management lands
+  - Summary: Updated `orqis init` to launch the web scaffold in a managed child process with readiness messaging, graceful stop handling, and source-mode fallback when runtime process artifacts are not built.
+  - Changed: `apps/cli/src/cli.ts`, `apps/cli/test/init.test.ts`, `apps/cli/test/fixtures/web-runtime-ready.mjs`, `apps/cli/test/fixtures/web-runtime-start-error.mjs`, `apps/web/src/runtime-process.ts`, `apps/web/test/runtime-process.test.ts`.
 - [ ] Implement managed `cloudflared`/`ngrok` process lifecycle and automatic URL discovery (remove manual `ORQIS_*_PUBLIC_URL` requirement)
 
 Safe to defer while Phase 2 starts:
