@@ -259,6 +259,31 @@ describe("orqis init config bootstrap", () => {
     ).rejects.toThrowError(/"schemaVersion" is not supported by this CLI version/);
   });
 
+  it("migrates schemaVersion 1 configs to the current default schema version", async () => {
+    const configDir = await makeTempDir("orqis-init-default-schema-migrate-");
+    const configPath = join(configDir, ORQIS_CONFIG_FILE_NAME);
+
+    await writeFile(
+      `${configPath}`,
+      '{"schemaVersion":1,"runtime":{"host":"127.0.0.1","port":43110},"tunnel":{"providers":["cloudflare","ngrok"]}}\n',
+    );
+
+    const first = await bootstrapOrqisConfig({ configDir });
+
+    expect(first.status).toBe("updated");
+    expect(first.config.schemaVersion).toBe(ORQIS_CONFIG_SCHEMA_VERSION);
+
+    const saved = JSON.parse(await readFile(configPath, "utf8")) as {
+      schemaVersion?: number;
+    };
+
+    expect(saved.schemaVersion).toBe(ORQIS_CONFIG_SCHEMA_VERSION);
+
+    const second = await bootstrapOrqisConfig({ configDir });
+    expect(second.status).toBe("unchanged");
+    expect(second.config.schemaVersion).toBe(ORQIS_CONFIG_SCHEMA_VERSION);
+  });
+
   it("applies explicit schema migrations when targeting a newer schema", async () => {
     const configDir = await makeTempDir("orqis-init-schema-migrate-");
     const configPath = join(configDir, ORQIS_CONFIG_FILE_NAME);
@@ -305,6 +330,7 @@ describe("orqis init config bootstrap", () => {
       bootstrapOrqisConfig({
         configDir,
         targetSchemaVersion: 2,
+        migrations: {},
       }),
     ).rejects.toThrowError(
       /Config schema migrations are incomplete: missing handler for 1 -> 2\./,

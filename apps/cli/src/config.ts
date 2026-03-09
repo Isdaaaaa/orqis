@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 export const ORQIS_CONFIG_DIR_ENV_VAR = "ORQIS_CONFIG_DIR";
 export const ORQIS_CONFIG_FILE_NAME = "config.json";
-export const ORQIS_CONFIG_SCHEMA_VERSION = 1;
+export const ORQIS_CONFIG_SCHEMA_VERSION = 2;
 const ORQIS_CONFIG_BASELINE_SCHEMA_VERSION = 1;
 const ORQIS_CONFIG_DIR_MODE = 0o700;
 const ORQIS_CONFIG_FILE_MODE = 0o600;
@@ -32,9 +32,16 @@ export interface BootstrapOrqisConfigResult {
 
 export type OrqisConfigMigration = (config: Record<string, unknown>) => void;
 
+function migrateConfigSchemaV1ToV2(_config: Record<string, unknown>): void {
+  // Schema v2 does not require a structural data transform from v1.
+  // Keeping an explicit migration preserves deterministic upgrade paths.
+}
+
 export const ORQIS_CONFIG_MIGRATIONS: Readonly<
   Record<number, OrqisConfigMigration>
-> = Object.freeze({});
+> = Object.freeze({
+  1: migrateConfigSchemaV1ToV2,
+});
 
 interface BootstrapOrqisConfigOptions {
   configDir?: string;
