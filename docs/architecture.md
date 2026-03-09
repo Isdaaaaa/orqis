@@ -4,6 +4,13 @@
 
 Define a deterministic, auditable multi-agent system where chat is the main UX but structured state is the source of truth.
 
+## Scope guardrails
+
+- Orqis is software-project-first, not a general company operating system.
+- Project workspace/group chat remains the primary user surface.
+- PM + specialist-agent orchestration is optimized for software delivery workflows.
+- Organization modeling, budget governance systems, and multi-company control planes are out of MVP scope.
+
 ## System parts
 
 ## 1) CLI bootstrap (`apps/cli`)
@@ -44,6 +51,7 @@ Responsibilities:
 - Approval state transitions.
 - Run lifecycle state machine.
 - Audit event generation.
+- Specialist-agent adapter registry and execution contracts.
 
 Key boundary:
 
@@ -89,6 +97,35 @@ Key boundary:
 - `provider_configs`
 - `model_configs`
 - `audit_events`
+
+## Phase 2+ workflow contracts
+
+### Task/ticket contract
+
+- `tasks` are first-class workflow records linked to `workspace_id` and `project_id`.
+- Task status is explicit and validated (for example: `todo`, `in_progress`, `waiting_approval`, `done`, `failed`, `blocked`).
+- Task ownership is run-aware via lock/correlation fields (`checkout_run_id`, `execution_run_id` style contract).
+- Parent-child task linkage preserves decomposition lineage from PM plan to specialist execution.
+
+### Approval enforcement contract
+
+- Approvals are guard conditions, not informational tags.
+- Guarded task/run transitions must check approval state before proceeding.
+- Approval lifecycle supports `pending`, `approved`, `rejected`, `revision_requested`, and `resubmitted`.
+- Approval decisions are linked back to affected tasks and runs.
+
+### Audit event contract
+
+- `audit_events` is append-only and written on every important mutation.
+- Required metadata: actor (`user`/`agent`/`system`), entity target, optional run linkage, timestamp, and change details.
+- Timeline views are projections over `audit_events` plus current entity state, not chat parsing.
+
+### Agent adapter contract
+
+- Specialist execution backends integrate through a typed adapter boundary.
+- Adapters expose execution, environment validation, and capability/model discovery hooks.
+- Unknown or invalid adapter types fail closed for workflow execution.
+- Local adapters land first; external HTTP/gateway adapters plug into the same contract.
 
 ## Critical flows
 

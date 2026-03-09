@@ -5,6 +5,27 @@
 - Prioritize a fast path to a usable MVP.
 - Keep architecture simple but explicit about future parallelism.
 - Finish one vertical slice at a time so every phase leaves a testable outcome.
+- Keep scope anchored on software-project delivery (project/workspace chat + PM orchestration).
+
+## Scope refinement (from Paperclip comparison)
+
+Adopt now (Phase 2-4):
+
+- Issue-style task records with explicit status and run-linked lock ownership.
+- Enforced approval lifecycle for guarded workflow transitions (including revision/resubmission).
+- Append-only audit event history with actor/run/entity metadata and filtered timeline views.
+- Typed adapter registry boundary so local and external specialist agents share one execution contract.
+
+Defer (after MVP unless needed sooner):
+
+- Rich policy-driven approval matrices beyond core delivery gates.
+- Broad adapter ecosystem expansion beyond initial local + pragmatic external adapters.
+
+Explicitly avoid in current roadmap:
+
+- Company-OS framing (org chart-first UX, executive-role modeling as primary surface).
+- Budget governance and portfolio control features as delivery blockers for MVP.
+- Multi-company control-plane concerns in Phase 2-4.
 
 ## Phase 1: Bootstrap spine
 
@@ -36,7 +57,10 @@ Goal:
 
 Deliverables:
 
-- Persistence schema and migrations.
+- Persistence schema and migrations, including:
+  - task contract fields for status + ownership/lock metadata,
+  - approval records with lifecycle + decision metadata,
+  - append-only audit event tables and indexes for timeline queries.
 - Project CRUD and project picker UI.
 - Per-project workspace timeline with message persistence.
 - Basic auth/session flow.
@@ -45,6 +69,7 @@ Dependency notes:
 
 - Depends on Phase 1 runtime availability.
 - Unblocks PM orchestration in real project contexts.
+- Must establish state contracts before Phase 3 execution logic enforces them.
 
 Parallelization opportunities:
 
@@ -59,10 +84,11 @@ Goal:
 Deliverables:
 
 - PM planner (`goal -> plan -> tasks`).
-- Task assignment with role mapping.
+- Task assignment with role mapping and lock-safe claim/release behavior.
 - Task output submission model.
-- Approval/reject flow and run state transitions.
-- Audit event coverage for all key transitions.
+- Approval/reject flow plus `revision_requested` and `resubmitted` loops.
+- Run/task transition guards that enforce approval state before guarded progress.
+- Audit event coverage for all key transitions with run/task correlation.
 
 Dependency notes:
 
@@ -82,6 +108,7 @@ Deliverables:
 
 - Planning, implementation, review, and integration workflow states.
 - Strong validation and error handling around transitions.
+- Audit timeline UX hardening (entity/run filters, readable transition trails).
 - Browser e2e coverage for critical path.
 
 Dependency notes:
@@ -103,6 +130,7 @@ Deliverables:
 - Parallel task dispatcher backend.
 - Git/repo integration primitives.
 - Richer approvals and policy gating.
+- Expanded adapter integrations for additional external specialist runtimes.
 - Multi-user collaboration improvements.
 
 Dependency notes:

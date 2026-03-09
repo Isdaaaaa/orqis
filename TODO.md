@@ -76,6 +76,9 @@ Safe to defer while Phase 2 starts:
 
 - [ ] Create project/workspace schema and migrations
   - Acceptance criteria: schema includes projects, workspaces, messages, tasks, approvals, runs, and audit events.
+  - Acceptance criteria: tasks support explicit state + lock ownership metadata (run-linked checkout/execution correlation fields) and parent-task lineage.
+  - Acceptance criteria: approvals persist lifecycle + decision metadata (`pending`, `approved`, `rejected`, `revision_requested`, `resubmitted`).
+  - Acceptance criteria: audit events are append-only with actor/entity/run correlation fields and indexed timeline queries.
 
 - [ ] Build project creation flow in UI
   - Acceptance criteria: user can create/list/select projects and each project resolves to one persistent workspace.
@@ -86,6 +89,19 @@ Safe to defer while Phase 2 starts:
 - [ ] Add basic local session auth
   - Acceptance criteria: protected routes require login and session persistence works across refresh.
 
+- [ ] Add specialist-agent adapter registry contract in core/runtime boundaries
+  - Acceptance criteria: adapter type registry supports execution + environment validation hooks and rejects unknown adapter types for task execution.
+
+#### Hardening before Phase 3
+
+Must finish before Phase 3:
+- [ ] Enforce task claim/ownership invariants at service level (single active execution lock per task and deterministic conflict errors)
+- [ ] Add regression tests proving guarded task/run transitions are blocked until required approvals are resolved
+- [ ] Add regression tests proving all task/approval/run mutations emit audit events with actor and run correlation metadata
+
+Unclassified:
+- [ ] Add query helpers for issue/task-centric run history so timeline and run drill-down share one contract
+
 ## Phase 3: Project Manager planning and task approvals
 
 - [ ] Implement Project Manager planner service (`goal -> plan -> task list`)
@@ -93,9 +109,12 @@ Safe to defer while Phase 2 starts:
 
 - [ ] Implement task assignment records and specialist role mapping
   - Acceptance criteria: each task has owner role, state, run linkage, and timestamps.
+  - Acceptance criteria: assignment + checkout flow is lock-safe and rejects competing ownership attempts deterministically.
 
 - [ ] Implement user approval/reject loop for task outputs
   - Acceptance criteria: user action updates approval status, audit event is written, and PM receives the decision.
+  - Acceptance criteria: flow supports revision request and agent resubmission without losing prior decision history.
+  - Acceptance criteria: PM cannot advance guarded tasks/runs while related approvals are unresolved.
 
 - [ ] Add first run lifecycle states (`planned`, `running`, `waiting_approval`, `done`, `failed`)
   - Acceptance criteria: run state transitions are validated and invalid transitions are rejected.
@@ -107,6 +126,7 @@ Safe to defer while Phase 2 starts:
 
 - [ ] Add audit timeline view
   - Acceptance criteria: key actions (task create/assign, approval, run status changes) are traceable in UI.
+  - Acceptance criteria: timeline supports filtering by actor, entity, and run/task correlation.
 
 - [ ] Add browser e2e checks for bootstrap + project + workspace + approval happy path
   - Acceptance criteria: Playwright suite covers one full user journey and runs in CI.
@@ -118,3 +138,6 @@ Safe to defer while Phase 2 starts:
 
 - [ ] Add repository/GitHub integration primitives
   - Acceptance criteria: project can store repo metadata and link run/task artifacts to commits or PRs.
+
+- [ ] Expand adapter integrations for additional external specialist runtimes
+  - Acceptance criteria: new adapters conform to the same typed execution/environment contract and do not bypass approval/audit guarantees.

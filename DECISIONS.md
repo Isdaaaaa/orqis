@@ -147,6 +147,97 @@ Tradeoffs:
 - Fallback behavior can mask primary-provider degradation without explicit observability.
 - Provider-specific capabilities are constrained by the shared metadata contract.
 
+## D-008: Use an issue-style task model with explicit lock ownership
+
+- Status: Accepted
+- Date: 2026-03-10
+
+Decision:
+
+- Model delivery work as first-class project tasks (ticket-like records) with:
+  - explicit lifecycle state,
+  - parent/child lineage for decomposition,
+  - assignment ownership,
+  - run-linked lock fields (`checkout_run_id`, `execution_run_id` style contract).
+- Enforce task-claim semantics so only one active run/agent session can own a task execution lock at a time.
+
+Why:
+
+- Keeps PM + specialist coordination deterministic under concurrent or retried work.
+- Preserves clear traceability from workspace request -> plan -> task -> run.
+- Aligns with Orqis' software-project-first workflow while avoiding chat-only task truth.
+
+Tradeoffs:
+
+- Adds more schema and state-machine complexity in Phase 2/3.
+- Requires careful migration and transition validation tests.
+
+## D-009: Treat approvals as enforcement gates, not just UI states
+
+- Status: Accepted
+- Date: 2026-03-10
+
+Decision:
+
+- Approval records must gate key workflow transitions (starting gated tasks, accepting outputs, sensitive PM decisions).
+- Approval lifecycle will support `pending`, `approved`, `rejected`, `revision_requested`, and `resubmitted`.
+- Workflow services must check approval state before allowing guarded transitions.
+
+Why:
+
+- Keeps the user in control without relying on social convention in chat.
+- Provides deterministic replay/audit of why work proceeded or was blocked.
+- Supports iterative review loops without discarding prior context.
+
+Tradeoffs:
+
+- More branching logic in orchestration services.
+- Needs explicit UX for revision and resubmission paths.
+
+## D-010: Use append-only audit events as the workflow history backbone
+
+- Status: Accepted
+- Date: 2026-03-10
+
+Decision:
+
+- Persist append-only `audit_events` for every important mutation in tasks, approvals, runs, and assignment actions.
+- Require actor + correlation metadata (`actor_type`, `actor_id`, optional `agent_id`, optional `run_id`, `entity_type`, `entity_id`, `details`).
+- Build timeline/read models from events plus current state snapshots, not from chat transcript parsing.
+
+Why:
+
+- Guarantees reconstructable history for debugging and trust.
+- Keeps timeline features reliable as workflows become more concurrent.
+- Matches Orqis requirement for durable, auditable project state.
+
+Tradeoffs:
+
+- Additional write load and schema surface.
+- Requires disciplined event contracts and redaction boundaries.
+
+## D-011: Keep a strict adapter boundary for external specialist agents
+
+- Status: Accepted
+- Date: 2026-03-10
+
+Decision:
+
+- Introduce a typed adapter registry in core/runtime boundaries for specialist execution backends (local CLI, process, HTTP/external).
+- Adapter contract must include execution, environment validation, and capability/model discovery hooks.
+- Unknown adapter types must fail closed in Orqis workflows (no implicit fallback execution for production task runs).
+
+Why:
+
+- Preserves extensibility for external agent integration without coupling PM logic to provider specifics.
+- Allows incremental adoption of external runtimes while retaining consistent task/run/approval semantics.
+- Keeps Orqis centered on software delivery workflows, not agent-vendor orchestration details.
+
+Tradeoffs:
+
+- Adapter capability variance increases integration test matrix.
+- Some providers will need translation layers before they fit the strict contract.
+
 ## Open questions
 
 - Which auth mode is best for MVP: local owner account only, or lightweight multi-user support?
