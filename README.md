@@ -38,7 +38,7 @@ Why the chosen stack:
 ## MVP workflow summary
 
 1. User runs `orqis init`.
-2. CLI prepares local config and starts the web runtime.
+2. CLI prepares local config, starts the web runtime, and waits for `/health` to report ready.
 3. CLI starts a tunnel adapter (Cloudflare Tunnel first, ngrok fallback).
 4. CLI prints a local URL and public URL.
 5. User configures providers, models, and agent roles in the web UI.
@@ -71,6 +71,12 @@ Common commands:
 - `pnpm -r build`
 - `pnpm -r test`
 - `pnpm -r typecheck`
+
+Current Phase 1 runtime behavior:
+
+- `node apps/cli/dist/cli.js init` starts the local web runtime and keeps serving until interrupted.
+- `orqis init` prints `local_url` and `health_url` after the CLI confirms the runtime is healthy.
+- Use `--health-timeout-ms <ms>` if startup readiness needs a different timeout window.
 
 ## First implementation target
 

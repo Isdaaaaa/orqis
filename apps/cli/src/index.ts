@@ -14,4 +14,12 @@ export {
   type BootstrapStatus,
 } from "./config.js";
 
-export { runCli } from "./cli.js";
+export {
+  isCliEntrypoint,
+  runCli,
+  startOrqisInitSession,
+  waitForRuntimeShutdown,
+  waitForWebRuntimeHealth,
+  type OrqisInitSession,
+  type WaitForWebRuntimeHealthOptions,
+} from "./cli.js";
