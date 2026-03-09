@@ -4,9 +4,10 @@ import { join } from "node:path";
 
 export const ORQIS_CONFIG_DIR_ENV_VAR = "ORQIS_CONFIG_DIR";
 export const ORQIS_CONFIG_FILE_NAME = "config.json";
+export const ORQIS_CONFIG_SCHEMA_VERSION = 1;
 
 export const DEFAULT_ORQIS_CONFIG = {
-  schemaVersion: 1,
+  schemaVersion: ORQIS_CONFIG_SCHEMA_VERSION,
   runtime: {
     host: "127.0.0.1",
     port: 43110,
@@ -92,6 +93,14 @@ function validateSchemaVersionShape(
       configFilePath,
       "schemaVersion",
       `must be an integer >= 1 when provided (received ${valueType(schemaVersion)})`,
+    );
+  }
+
+  if (schemaVersion > ORQIS_CONFIG_SCHEMA_VERSION) {
+    throwConfigShapeError(
+      configFilePath,
+      "schemaVersion",
+      `is not supported by this CLI version (max supported ${ORQIS_CONFIG_SCHEMA_VERSION}, received ${schemaVersion})`,
     );
   }
 }

@@ -36,7 +36,9 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
       return error.exitCode;
     }
 
-    throw error;
+    const message = error instanceof Error ? error.message : "Unknown CLI error.";
+    console.error(message);
+    return 1;
   }
 
   return 0;
@@ -47,16 +49,9 @@ const isEntrypoint =
   import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isEntrypoint) {
-  runCli()
-    .then((exitCode) => {
-      if (exitCode !== 0) {
-        process.exitCode = exitCode;
-      }
-    })
-    .catch((error) => {
-      const message =
-        error instanceof Error ? error.message : "Unknown CLI error.";
-      console.error(message);
-      process.exitCode = 1;
-    });
+  runCli().then((exitCode) => {
+    if (exitCode !== 0) {
+      process.exitCode = exitCode;
+    }
+  });
 }

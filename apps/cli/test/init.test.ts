@@ -9,6 +9,7 @@ import {
   DEFAULT_ORQIS_CONFIG,
   ORQIS_CONFIG_DIR_ENV_VAR,
   ORQIS_CONFIG_FILE_NAME,
+  ORQIS_CONFIG_SCHEMA_VERSION,
   bootstrapOrqisConfig,
   resolveOrqisConfigDir,
 } from "../src/config.ts";
@@ -117,6 +118,31 @@ describe("orqis init config bootstrap", () => {
     ).rejects.toThrowError(/"schemaVersion" must be an integer >= 1/);
   });
 
+  it("fails fast when schemaVersion is newer than this CLI supports", async () => {
+    const configDir = await makeTempDir("orqis-init-unsupported-schema-version-");
+    const configPath = join(configDir, ORQIS_CONFIG_FILE_NAME);
+
+    await writeFile(
+      `${configPath}`,
+      `{"schemaVersion":${ORQIS_CONFIG_SCHEMA_VERSION + 1}}\n`,
+    );
+
+    await expect(
+      bootstrapOrqisConfig({ configDir }),
+    ).rejects.toThrowError(/"schemaVersion" is not supported by this CLI version/);
+  });
+
+  it("fails fast when config contains invalid JSON", async () => {
+    const configDir = await makeTempDir("orqis-init-invalid-json-");
+    const configPath = join(configDir, ORQIS_CONFIG_FILE_NAME);
+
+    await writeFile(`${configPath}`, '{"schemaVersion":1,,}\n');
+
+    await expect(
+      bootstrapOrqisConfig({ configDir }),
+    ).rejects.toThrowError(/Cannot parse config file at .*\. Fix invalid JSON and retry\./);
+  });
+
   it("resolves config dir from ORQIS_CONFIG_DIR when no option is passed", async () => {
     const configDir = await makeTempDir("orqis-init-env-dir-");
 
@@ -152,5 +178,28 @@ describe("orqis init config bootstrap", () => {
     const exitCode = await runCli(["node", "orqis", "bogus"]);
 
     expect(exitCode).toBe(1);
+  });
+
+  it("returns non-zero when init fails during config bootstrap", async () => {
+    const configDir = await makeTempDir("orqis-init-cli-bootstrap-error-");
+    const configPath = join(configDir, ORQIS_CONFIG_FILE_NAME);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {
+      return;
+    });
+
+    await writeFile(`${configPath}`, '{"schemaVersion":1,"runtime":null}\n');
+
+    const exitCode = await runCli([
+      "node",
+      "orqis",
+      "init",
+      "--config-dir",
+      configDir,
+    ]);
+
+    expect(exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringMatching(/"runtime" must be an object when provided/),
+    );
   });
 });
