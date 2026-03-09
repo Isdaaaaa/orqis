@@ -480,7 +480,6 @@ function createManagedTunnelProviderSession(
 
 function findCloudflarePublicUrl(output: string): string | undefined {
   const candidates = collectUrlCandidates(output);
-  let fallback: string | undefined;
 
   for (const candidate of candidates) {
     const hostname = candidate.hostname.toLowerCase();
@@ -491,13 +490,9 @@ function findCloudflarePublicUrl(output: string): string | undefined {
     ) {
       return candidate.toString();
     }
-
-    if (fallback === undefined && candidate.protocol === "https:") {
-      fallback = candidate.toString();
-    }
   }
 
-  return fallback;
+  return undefined;
 }
 
 function findNgrokPublicUrlFromOutput(output: string): string | undefined {

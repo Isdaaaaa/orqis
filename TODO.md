@@ -58,6 +58,9 @@ Safe to defer while Phase 2 starts:
 - [x] Fix `orqis init` config schema-version mismatch for reruns against existing `schemaVersion: 2` configs
   - Summary: Bumped default supported config schema to v2 with an explicit built-in `1 -> 2` migration path, added rerun migration coverage, and documented local non-global CLI usage via `pnpm orqis:init`.
   - Changed: `apps/cli/src/config.ts`, `apps/cli/test/init.test.ts`, `package.json`, `README.md`, `TODO.md`.
+- [x] Fix Cloudflare tunnel public URL discovery to ignore disclaimer/documentation links
+  - Summary: Tightened Cloudflare URL extraction to accept only tunnel hostnames (`*.trycloudflare.com` / `*.cfargotunnel.com`) and added regression coverage for the disclaimer-output ordering that previously produced non-tunnel URLs.
+  - Changed: `packages/tunnel/src/index.ts`, `packages/tunnel/test/scaffold.test.ts`, `TODO.md`.
 - [ ] Tighten `orqis init --health-timeout-ms` validation to reject non-numeric suffix input (for example `10abc`)
 - [ ] Add CLI regression coverage that asserts `--health-timeout-ms` rejects non-numeric suffix input (for example `10abc`)
 - [ ] Add signal-shutdown test coverage for `waitForRuntimeShutdown` (listener cleanup and runtime stop invocation)
