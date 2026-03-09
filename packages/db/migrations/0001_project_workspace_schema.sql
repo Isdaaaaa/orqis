@@ -125,6 +125,148 @@ CREATE INDEX `approvals_task_created_at_idx` ON `approvals` (`task_id`, `created
 CREATE INDEX `approvals_status_created_at_idx` ON `approvals` (`status`, `created_at`);
 CREATE INDEX `approvals_run_created_at_idx` ON `approvals` (`run_id`, `created_at`);
 
+CREATE TRIGGER `messages_same_workspace_run_id_insert`
+BEFORE INSERT ON `messages`
+WHEN NEW.`run_id` IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1
+    FROM `runs`
+    WHERE `id` = NEW.`run_id`
+      AND `project_id` = NEW.`project_id`
+      AND `workspace_id` = NEW.`workspace_id`
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'messages.run_id must reference a run in the same project/workspace');
+END;
+
+CREATE TRIGGER `messages_same_workspace_run_id_update`
+BEFORE UPDATE ON `messages`
+WHEN NEW.`run_id` IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1
+    FROM `runs`
+    WHERE `id` = NEW.`run_id`
+      AND `project_id` = NEW.`project_id`
+      AND `workspace_id` = NEW.`workspace_id`
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'messages.run_id must reference a run in the same project/workspace');
+END;
+
+CREATE TRIGGER `tasks_same_workspace_run_refs_insert`
+BEFORE INSERT ON `tasks`
+BEGIN
+  SELECT RAISE(ABORT, 'tasks.run_id must reference a run in the same project/workspace')
+  WHERE NEW.`run_id` IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1
+      FROM `runs`
+      WHERE `id` = NEW.`run_id`
+        AND `project_id` = NEW.`project_id`
+        AND `workspace_id` = NEW.`workspace_id`
+    );
+
+  SELECT RAISE(ABORT, 'tasks.checkout_run_id must reference a run in the same project/workspace')
+  WHERE NEW.`checkout_run_id` IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1
+      FROM `runs`
+      WHERE `id` = NEW.`checkout_run_id`
+        AND `project_id` = NEW.`project_id`
+        AND `workspace_id` = NEW.`workspace_id`
+    );
+
+  SELECT RAISE(ABORT, 'tasks.execution_run_id must reference a run in the same project/workspace')
+  WHERE NEW.`execution_run_id` IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1
+      FROM `runs`
+      WHERE `id` = NEW.`execution_run_id`
+        AND `project_id` = NEW.`project_id`
+        AND `workspace_id` = NEW.`workspace_id`
+    );
+END;
+
+CREATE TRIGGER `tasks_same_workspace_run_refs_update`
+BEFORE UPDATE ON `tasks`
+BEGIN
+  SELECT RAISE(ABORT, 'tasks.run_id must reference a run in the same project/workspace')
+  WHERE NEW.`run_id` IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1
+      FROM `runs`
+      WHERE `id` = NEW.`run_id`
+        AND `project_id` = NEW.`project_id`
+        AND `workspace_id` = NEW.`workspace_id`
+    );
+
+  SELECT RAISE(ABORT, 'tasks.checkout_run_id must reference a run in the same project/workspace')
+  WHERE NEW.`checkout_run_id` IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1
+      FROM `runs`
+      WHERE `id` = NEW.`checkout_run_id`
+        AND `project_id` = NEW.`project_id`
+        AND `workspace_id` = NEW.`workspace_id`
+    );
+
+  SELECT RAISE(ABORT, 'tasks.execution_run_id must reference a run in the same project/workspace')
+  WHERE NEW.`execution_run_id` IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1
+      FROM `runs`
+      WHERE `id` = NEW.`execution_run_id`
+        AND `project_id` = NEW.`project_id`
+        AND `workspace_id` = NEW.`workspace_id`
+    );
+END;
+
+CREATE TRIGGER `approvals_same_workspace_refs_insert`
+BEFORE INSERT ON `approvals`
+BEGIN
+  SELECT RAISE(ABORT, 'approvals.task_id must reference a task in the same project/workspace')
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM `tasks`
+    WHERE `id` = NEW.`task_id`
+      AND `project_id` = NEW.`project_id`
+      AND `workspace_id` = NEW.`workspace_id`
+  );
+
+  SELECT RAISE(ABORT, 'approvals.run_id must reference a run in the same project/workspace')
+  WHERE NEW.`run_id` IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1
+      FROM `runs`
+      WHERE `id` = NEW.`run_id`
+        AND `project_id` = NEW.`project_id`
+        AND `workspace_id` = NEW.`workspace_id`
+    );
+END;
+
+CREATE TRIGGER `approvals_same_workspace_refs_update`
+BEFORE UPDATE ON `approvals`
+BEGIN
+  SELECT RAISE(ABORT, 'approvals.task_id must reference a task in the same project/workspace')
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM `tasks`
+    WHERE `id` = NEW.`task_id`
+      AND `project_id` = NEW.`project_id`
+      AND `workspace_id` = NEW.`workspace_id`
+  );
+
+  SELECT RAISE(ABORT, 'approvals.run_id must reference a run in the same project/workspace')
+  WHERE NEW.`run_id` IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1
+      FROM `runs`
+      WHERE `id` = NEW.`run_id`
+        AND `project_id` = NEW.`project_id`
+        AND `workspace_id` = NEW.`workspace_id`
+    );
+END;
+
 CREATE TABLE `audit_events` (
   `id` text PRIMARY KEY NOT NULL,
   `project_id` text NOT NULL,

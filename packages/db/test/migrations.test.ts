@@ -163,6 +163,21 @@ describe("@orqis/db migration SQL", () => {
     expect(migrationSql).toContain("CREATE INDEX `approvals_run_created_at_idx`");
   });
 
+  it("adds validation triggers for same-project/workspace linked run/task refs", () => {
+    const expectedTriggers = [
+      "messages_same_workspace_run_id_insert",
+      "messages_same_workspace_run_id_update",
+      "tasks_same_workspace_run_refs_insert",
+      "tasks_same_workspace_run_refs_update",
+      "approvals_same_workspace_refs_insert",
+      "approvals_same_workspace_refs_update",
+    ];
+
+    for (const triggerName of expectedTriggers) {
+      expect(migrationSql).toContain(`CREATE TRIGGER \`${triggerName}\``);
+    }
+  });
+
   it("makes audit events append-only and keeps project/workspace correlation", () => {
     const auditEventsTableSql = extractTableSql(migrationSql, "audit_events");
 
@@ -254,7 +269,9 @@ describe("@orqis/db migration SQL", () => {
           "INSERT INTO approvals (id, project_id, workspace_id, task_id, status, requested_by_actor_type) VALUES (?, ?, ?, ?, ?, ?)",
           ["a_bad", "p2", "w1", "t1", "pending", "user"],
         ),
-      ).toThrow(/FOREIGN KEY constraint failed/);
+      ).toThrow(
+        /approvals\.task_id must reference a task in the same project\/workspace/,
+      );
 
       expect(() =>
         db.run(
@@ -262,6 +279,101 @@ describe("@orqis/db migration SQL", () => {
           ["e_bad", "p2", "w1", "user", "task", "t1", "created"],
         ),
       ).toThrow(/FOREIGN KEY constraint failed/);
+    });
+  });
+
+  it("rejects linked run/task refs that point outside the row project/workspace", async () => {
+    await withDatabase((db) => {
+      db.run("INSERT INTO projects (id, slug, name) VALUES (?, ?, ?)", [
+        "p1",
+        "project-1",
+        "Project 1",
+      ]);
+      db.run("INSERT INTO projects (id, slug, name) VALUES (?, ?, ?)", [
+        "p2",
+        "project-2",
+        "Project 2",
+      ]);
+      db.run("INSERT INTO workspaces (id, project_id, name) VALUES (?, ?, ?)", [
+        "w1",
+        "p1",
+        "Workspace 1",
+      ]);
+      db.run("INSERT INTO workspaces (id, project_id, name) VALUES (?, ?, ?)", [
+        "w2",
+        "p2",
+        "Workspace 2",
+      ]);
+      db.run(
+        "INSERT INTO runs (id, project_id, workspace_id, status) VALUES (?, ?, ?, ?)",
+        ["r1", "p1", "w1", "planned"],
+      );
+      db.run(
+        "INSERT INTO runs (id, project_id, workspace_id, status) VALUES (?, ?, ?, ?)",
+        ["r2", "p2", "w2", "planned"],
+      );
+      db.run(
+        "INSERT INTO tasks (id, project_id, workspace_id, run_id, title, state) VALUES (?, ?, ?, ?, ?, ?)",
+        ["t1", "p1", "w1", "r1", "Task 1", "todo"],
+      );
+      db.run(
+        "INSERT INTO tasks (id, project_id, workspace_id, run_id, title, state) VALUES (?, ?, ?, ?, ?, ?)",
+        ["t2", "p2", "w2", "r2", "Task 2", "todo"],
+      );
+
+      expect(() =>
+        db.run(
+          "INSERT INTO messages (id, project_id, workspace_id, run_id, actor_type, content) VALUES (?, ?, ?, ?, ?, ?)",
+          ["m_cross_run", "p2", "w2", "r1", "user", "message"],
+        ),
+      ).toThrow(
+        /messages\.run_id must reference a run in the same project\/workspace/,
+      );
+
+      expect(() =>
+        db.run(
+          "INSERT INTO tasks (id, project_id, workspace_id, run_id, title, state) VALUES (?, ?, ?, ?, ?, ?)",
+          ["t_cross_run", "p2", "w2", "r1", "Task cross run", "todo"],
+        ),
+      ).toThrow(
+        /tasks\.run_id must reference a run in the same project\/workspace/,
+      );
+
+      expect(() =>
+        db.run(
+          "INSERT INTO tasks (id, project_id, workspace_id, title, state, checkout_run_id) VALUES (?, ?, ?, ?, ?, ?)",
+          ["t_cross_checkout", "p2", "w2", "Task checkout", "todo", "r1"],
+        ),
+      ).toThrow(
+        /tasks\.checkout_run_id must reference a run in the same project\/workspace/,
+      );
+
+      expect(() =>
+        db.run(
+          "INSERT INTO tasks (id, project_id, workspace_id, title, state, execution_run_id) VALUES (?, ?, ?, ?, ?, ?)",
+          ["t_cross_execution", "p2", "w2", "Task execution", "todo", "r1"],
+        ),
+      ).toThrow(
+        /tasks\.execution_run_id must reference a run in the same project\/workspace/,
+      );
+
+      expect(() =>
+        db.run(
+          "INSERT INTO approvals (id, project_id, workspace_id, task_id, status, requested_by_actor_type) VALUES (?, ?, ?, ?, ?, ?)",
+          ["a_cross_task", "p2", "w2", "t1", "pending", "user"],
+        ),
+      ).toThrow(
+        /approvals\.task_id must reference a task in the same project\/workspace/,
+      );
+
+      expect(() =>
+        db.run(
+          "INSERT INTO approvals (id, project_id, workspace_id, task_id, run_id, status, requested_by_actor_type) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          ["a_cross_run", "p2", "w2", "t2", "r1", "pending", "user"],
+        ),
+      ).toThrow(
+        /approvals\.run_id must reference a run in the same project\/workspace/,
+      );
     });
   });
 

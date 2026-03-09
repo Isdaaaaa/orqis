@@ -103,6 +103,11 @@ Safe to defer while Phase 2 starts:
   - Summary (follow-up): Added executable in-memory migration behavior tests for cross-project mismatch rejection and append-only audit-event enforcement during parent cleanup.
   - Changed: `packages/db/src/schema.ts`, `packages/db/migrations/0001_project_workspace_schema.sql`, `packages/db/test/migrations.test.ts`, `packages/db/package.json`, `pnpm-lock.yaml`, `TODO.md`.
 
+- [x] Enforce same-project/workspace linked reference invariants for `run_id`/`task_id`
+  - Summary: Added migration-level validation triggers that reject `messages`, `tasks`, and `approvals` inserts/updates when linked `run_id`/`task_id` values point to a different project/workspace.
+  - Summary (follow-up): Added executable regression coverage for cross-workspace `run_id`, `checkout_run_id`, `execution_run_id`, `task_id`, and `approvals.run_id` mismatches.
+  - Changed: `packages/db/migrations/0001_project_workspace_schema.sql`, `packages/db/src/schema.ts`, `packages/db/test/migrations.test.ts`, `TODO.md`.
+
 #### Hardening before Phase 3
 
 Must finish before Phase 3:

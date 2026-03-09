@@ -118,6 +118,7 @@ export const messages = sqliteTable(
     workspaceId: text("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
+    // Migration SQL triggers enforce that linked runs stay within this row's project/workspace pair.
     runId: text("run_id").references(() => runs.id, { onDelete: "set null" }),
     parentMessageId: text("parent_message_id"),
     actorType: text("actor_type").notNull(),
@@ -155,6 +156,7 @@ export const tasks = sqliteTable(
     workspaceId: text("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
+    // Migration SQL triggers enforce that linked runs stay within this row's project/workspace pair.
     runId: text("run_id").references(() => runs.id, { onDelete: "set null" }),
     parentTaskId: text("parent_task_id"),
     title: text("title").notNull(),
@@ -215,6 +217,7 @@ export const approvals = sqliteTable(
     workspaceId: text("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
+    // Migration SQL triggers enforce that linked task/run refs stay within this row's project/workspace pair.
     taskId: text("task_id")
       .notNull()
       .references(() => tasks.id, { onDelete: "cascade" }),
