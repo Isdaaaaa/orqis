@@ -12,13 +12,14 @@ Responsibilities:
 
 - `orqis init` command entrypoint.
 - Local config bootstrap and validation.
-- Start/monitor web runtime process.
+- Start/monitor web runtime lifecycle.
 - Start/monitor tunnel provider via adapter interface.
 - Print local/public URLs and runtime status.
 
 Key boundary:
 
 - CLI does not own project/task business logic. It only boots, monitors, and reports runtime state.
+- Phase 1 keeps the web runtime scaffold attached to the CLI process; split it into a dedicated process before tunnel/provider lifecycle grows more complex.
 
 ## 2) Web control center (`apps/web`)
 

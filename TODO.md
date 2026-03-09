@@ -27,14 +27,21 @@ Implement the `orqis init` vertical slice: local runtime boot + tunnel URL hando
   - Summary (follow-up): Fixed symlinked CLI entrypoint detection and narrowed `ENOENT` handling to initial config reads so migration errors cannot be misclassified as missing config files.
   - Changed: `apps/cli/src/cli.ts`, `apps/cli/src/config.ts`, `apps/cli/src/index.ts`, `apps/cli/test/init.test.ts`, `apps/cli/package.json`, `pnpm-lock.yaml`.
 
-- [ ] Add web runtime launcher and health checks from CLI
+- [x] Add web runtime launcher and health checks from CLI
   - Acceptance criteria: CLI starts web runtime, confirms health endpoint, and exits with clear errors when startup fails.
+  - Summary: Added a minimal HTTP web runtime scaffold with `/` and `/health`, then wired `orqis init` to launch it, poll readiness, print local runtime details, and stay alive until shutdown.
+  - Summary (follow-up): Added runtime startup, health-check, and shutdown coverage across CLI and web package tests, plus a built-artifact verification pass for the default runtime loader.
+  - Changed: `apps/cli/src/cli.ts`, `apps/cli/src/index.ts`, `apps/cli/test/init.test.ts`, `apps/web/src/index.ts`, `apps/web/test/runtime.test.ts`, `apps/web/package.json`, `pnpm-lock.yaml`, `README.md`, `docs/architecture.md`, `TODO.md`.
 
 - [ ] Add tunnel adapter abstraction with Cloudflare-first strategy and ngrok fallback
   - Acceptance criteria: CLI can launch at least one tunnel provider and returns public URL with provider metadata.
 
 - [ ] Add bootstrap smoke test for `orqis init`
   - Acceptance criteria: automated test verifies config generation, runtime boot, and URL output contract.
+
+#### Hardening before Phase 2
+
+- [ ] Split the scaffold web runtime into a dedicated process before tunnel-provider lifecycle management lands
 
 ## Phase 2: Projects and persistent workspaces
 

@@ -4,9 +4,297 @@ import { Command, CommanderError } from "commander";
 import { realpathSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { bootstrapOrqisConfig } from "./config.js";
+import {
+  DEFAULT_ORQIS_CONFIG,
+  bootstrapOrqisConfig,
+} from "./config.js";
 
-export async function runCli(argv: string[] = process.argv): Promise<number> {
+const DEFAULT_WEB_RUNTIME_HEALTH_TIMEOUT_MS = 5_000;
+const DEFAULT_WEB_RUNTIME_HEALTH_INTERVAL_MS = 100;
+
+interface RuntimeConfig {
+  readonly host: string;
+  readonly port: number;
+}
+
+interface WebRuntimeHandle {
+  readonly baseUrl: string;
+  readonly healthUrl: string;
+  stop(): Promise<void>;
+}
+
+type ResolveFilePath = (filePath: string) => string;
+type StartWebRuntime = (options: RuntimeConfig) => Promise<WebRuntimeHandle>;
+type FetchLike = typeof fetch;
+type Sleep = (durationMs: number) => Promise<void>;
+
+interface RunCliDependencies {
+  bootstrapConfig?: typeof bootstrapOrqisConfig;
+  startWebRuntime?: StartWebRuntime;
+  fetchImpl?: FetchLike;
+  sleep?: Sleep;
+  waitForShutdown?: (runtime: WebRuntimeHandle) => Promise<void>;
+}
+
+export interface WaitForWebRuntimeHealthOptions {
+  readonly fetchImpl?: FetchLike;
+  readonly intervalMs?: number;
+  readonly sleep?: Sleep;
+  readonly timeoutMs?: number;
+  readonly url: string;
+}
+
+export interface OrqisInitSession {
+  readonly configDir: string;
+  readonly configFilePath: string;
+  readonly config: Record<string, unknown>;
+  readonly status: "created" | "updated" | "unchanged";
+  readonly localUrl: string;
+  readonly healthUrl: string;
+  readonly runtime: WebRuntimeHandle;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasErrnoCode(
+  error: unknown,
+  code: string,
+): error is NodeJS.ErrnoException {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === code
+  );
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function resolveRuntimeConfig(config: Record<string, unknown>): RuntimeConfig {
+  const runtime = isRecord(config.runtime) ? config.runtime : {};
+
+  return {
+    host:
+      typeof runtime.host === "string"
+        ? runtime.host
+        : DEFAULT_ORQIS_CONFIG.runtime.host,
+    port:
+      typeof runtime.port === "number"
+        ? runtime.port
+        : DEFAULT_ORQIS_CONFIG.runtime.port,
+  };
+}
+
+function delay(durationMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, durationMs);
+  });
+}
+
+async function loadWebRuntimeStarter(): Promise<StartWebRuntime> {
+  const moduleCandidates = [
+    new URL("../../web/dist/index.js", import.meta.url),
+    new URL("../../web/src/index.ts", import.meta.url),
+  ];
+
+  let lastError: unknown;
+
+  for (const candidate of moduleCandidates) {
+    try {
+      const module = (await import(candidate.href)) as {
+        startOrqisWebRuntime?: StartWebRuntime;
+      };
+
+      if (typeof module.startOrqisWebRuntime !== "function") {
+        throw new Error(
+          `Resolved ${candidate.pathname} but it does not export startOrqisWebRuntime().`,
+        );
+      }
+
+      return module.startOrqisWebRuntime;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw new Error(
+    `Cannot load the Orqis web runtime module. Build the workspace or run from the repository root. Last error: ${getErrorMessage(lastError)}`,
+  );
+}
+
+async function startWebRuntimeWithDefaultModule(
+  options: RuntimeConfig,
+): Promise<WebRuntimeHandle> {
+  const startWebRuntime = await loadWebRuntimeStarter();
+  return startWebRuntime(options);
+}
+
+function formatRuntimeAddress(config: RuntimeConfig): string {
+  return `http://${config.host}:${config.port}`;
+}
+
+function formatRuntimeLaunchError(
+  error: unknown,
+  config: RuntimeConfig,
+): string {
+  if (hasErrnoCode(error, "EADDRINUSE")) {
+    return `Web runtime could not start on ${formatRuntimeAddress(config)} because the port is already in use. Free the port or change runtime.port in the Orqis config.`;
+  }
+
+  if (hasErrnoCode(error, "EACCES")) {
+    return `Web runtime could not start on ${formatRuntimeAddress(config)} because access was denied. Choose a higher port or adjust host/port permissions.`;
+  }
+
+  return `Web runtime could not start on ${formatRuntimeAddress(config)}: ${getErrorMessage(error)}`;
+}
+
+function formatHealthCheckError(
+  error: unknown,
+  url: string,
+  timeoutMs: number,
+): string {
+  return `Web runtime did not pass health checks at ${url} within ${timeoutMs}ms: ${getErrorMessage(error)}`;
+}
+
+export async function waitForWebRuntimeHealth(
+  options: WaitForWebRuntimeHealthOptions,
+): Promise<void> {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const intervalMs = options.intervalMs ?? DEFAULT_WEB_RUNTIME_HEALTH_INTERVAL_MS;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_WEB_RUNTIME_HEALTH_TIMEOUT_MS;
+  const sleep = options.sleep ?? delay;
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
+
+  while (Date.now() <= deadline) {
+    try {
+      const response = await fetchImpl(options.url, {
+        method: "GET",
+        headers: {
+          accept: "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`received HTTP ${response.status}`);
+      }
+
+      const payload = (await response.json()) as unknown;
+
+      if (
+        !isRecord(payload) ||
+        payload.status !== "ok" ||
+        payload.service !== "@orqis/web"
+      ) {
+        throw new Error("returned an unexpected payload");
+      }
+
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+
+    await sleep(intervalMs);
+  }
+
+  throw new Error(getErrorMessage(lastError));
+}
+
+export async function startOrqisInitSession(
+  options: {
+    readonly configDir?: string;
+    readonly healthTimeoutMs?: number;
+  } = {},
+  dependencies: RunCliDependencies = {},
+): Promise<OrqisInitSession> {
+  const bootstrapConfig = dependencies.bootstrapConfig ?? bootstrapOrqisConfig;
+  const startWebRuntime =
+    dependencies.startWebRuntime ?? startWebRuntimeWithDefaultModule;
+  const fetchImpl = dependencies.fetchImpl ?? fetch;
+  const sleep = dependencies.sleep ?? delay;
+  const bootstrapResult = await bootstrapConfig({
+    configDir: options.configDir,
+  });
+  const runtimeConfig = resolveRuntimeConfig(bootstrapResult.config);
+
+  let runtime: WebRuntimeHandle;
+  try {
+    runtime = await startWebRuntime(runtimeConfig);
+  } catch (error) {
+    throw new Error(formatRuntimeLaunchError(error, runtimeConfig));
+  }
+
+  try {
+    await waitForWebRuntimeHealth({
+      url: runtime.healthUrl,
+      timeoutMs: options.healthTimeoutMs,
+      fetchImpl,
+      sleep,
+    });
+  } catch (error) {
+    await runtime.stop().catch(() => undefined);
+    throw new Error(
+      formatHealthCheckError(
+        error,
+        runtime.healthUrl,
+        options.healthTimeoutMs ?? DEFAULT_WEB_RUNTIME_HEALTH_TIMEOUT_MS,
+      ),
+    );
+  }
+
+  return {
+    ...bootstrapResult,
+    localUrl: runtime.baseUrl,
+    healthUrl: runtime.healthUrl,
+    runtime,
+  };
+}
+
+export async function waitForRuntimeShutdown(
+  runtime: WebRuntimeHandle,
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+
+    const finish = (callback: () => void): void => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      process.off("SIGINT", onSignal);
+      process.off("SIGTERM", onSignal);
+      callback();
+    };
+
+    const onSignal = (signal: NodeJS.Signals): void => {
+      void runtime
+        .stop()
+        .then(() => {
+          finish(resolve);
+        })
+        .catch((error) => {
+          finish(() => reject(error));
+        });
+
+      if (signal === "SIGINT" || signal === "SIGTERM") {
+        process.exitCode ??= 0;
+      }
+    };
+
+    process.once("SIGINT", onSignal);
+    process.once("SIGTERM", onSignal);
+  });
+}
+
+export async function runCli(
+  argv: string[] = process.argv,
+  dependencies: RunCliDependencies = {},
+): Promise<number> {
   const program = new Command();
   program.exitOverride();
 
@@ -15,20 +303,47 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
     .description("Orqis CLI")
     .showHelpAfterError()
     .command("init")
-    .description("Bootstrap Orqis local configuration")
+    .description("Bootstrap Orqis local configuration and start the web runtime")
     .option(
       "--config-dir <path>",
       "Use a custom config directory (defaults to ORQIS_CONFIG_DIR or ~/.orqis)",
     )
-    .action(async (options: { configDir?: string }) => {
-      const result = await bootstrapOrqisConfig({
-        configDir: options.configDir,
-      });
+    .option(
+      "--health-timeout-ms <ms>",
+      "Override the web runtime health-check timeout",
+      (value: string): number => {
+        const parsed = Number.parseInt(value, 10);
 
-      console.log(`orqis init: ${result.status}`);
-      console.log(`config_dir=${result.configDir}`);
-      console.log(`config_file=${result.configFilePath}`);
-    });
+        if (!Number.isInteger(parsed) || parsed < 1) {
+          throw new Error("Health timeout must be an integer >= 1.");
+        }
+
+        return parsed;
+      },
+    )
+    .action(
+      async (options: { configDir?: string; healthTimeoutMs?: number }) => {
+        const session = await startOrqisInitSession(
+          {
+            configDir: options.configDir,
+            healthTimeoutMs: options.healthTimeoutMs,
+          },
+          dependencies,
+        );
+
+        console.log(`orqis init: ${session.status}`);
+        console.log(`config_dir=${session.configDir}`);
+        console.log(`config_file=${session.configFilePath}`);
+        console.log(`local_url=${session.localUrl}`);
+        console.log(`health_url=${session.healthUrl}`);
+        console.log("web_runtime=ready");
+
+        const waitForShutdown =
+          dependencies.waitForShutdown ?? waitForRuntimeShutdown;
+
+        await waitForShutdown(session.runtime);
+      },
+    );
 
   try {
     await program.parseAsync(argv);
@@ -44,8 +359,6 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
 
   return 0;
 }
-
-type ResolveFilePath = (filePath: string) => string;
 
 export function isCliEntrypoint(
   moduleUrl: string,
