@@ -45,6 +45,7 @@ Implement the `orqis init` vertical slice: local runtime boot + tunnel URL hando
 
 - [ ] Split the scaffold web runtime into a dedicated process before tunnel-provider lifecycle management lands
 - [ ] Tighten `orqis init --health-timeout-ms` validation to reject non-numeric suffix input (for example `10abc`)
+- [ ] Replace synthesized tunnel URL generation with managed `cloudflared`/`ngrok` process lifecycle and URL discovery
 
 ## Phase 2: Projects and persistent workspaces
 
