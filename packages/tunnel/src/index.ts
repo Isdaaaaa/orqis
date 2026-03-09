@@ -533,10 +533,6 @@ function tunnelConfigTargetsLocalUrl(
     return true;
   }
 
-  if (normalizedAddr.endsWith(`:${localUrl.port}`)) {
-    return true;
-  }
-
   try {
     const parsed = new URL(
       /^[a-z]+:\/\//i.test(normalizedAddr)
@@ -544,7 +540,17 @@ function tunnelConfigTargetsLocalUrl(
         : `http://${normalizedAddr}`,
     );
 
-    return parsed.port === localUrl.port;
+    if (parsed.port !== localUrl.port) {
+      return false;
+    }
+
+    if (parsed.hostname.toLowerCase() === localUrl.hostname.toLowerCase()) {
+      return true;
+    }
+
+    return (
+      isLikelyLocalHost(parsed.hostname) && isLikelyLocalHost(localUrl.hostname)
+    );
   } catch {
     return false;
   }
@@ -566,7 +572,6 @@ function findNgrokPublicUrlFromApiPayload(
 
   const parsedLocalUrl = new URL(localUrl);
   const matchingCandidates: URL[] = [];
-  const fallbackCandidates: URL[] = [];
 
   for (const tunnel of tunnels) {
     if (!isRecord(tunnel) || typeof tunnel.public_url !== "string") {
@@ -583,31 +588,23 @@ function findNgrokPublicUrlFromApiPayload(
     const configAddr =
       config && typeof config.addr === "string" ? config.addr : undefined;
 
-    if (
-      configAddr !== undefined &&
-      tunnelConfigTargetsLocalUrl(configAddr, parsedLocalUrl)
-    ) {
-      matchingCandidates.push(candidate);
-      continue;
-    }
-
     if (configAddr === undefined) {
-      matchingCandidates.push(candidate);
       continue;
     }
 
-    fallbackCandidates.push(candidate);
+    if (tunnelConfigTargetsLocalUrl(configAddr, parsedLocalUrl)) {
+      matchingCandidates.push(candidate);
+    }
   }
 
-  const ordered =
-    matchingCandidates.length > 0 ? matchingCandidates : fallbackCandidates;
-
-  if (ordered.length === 0) {
+  if (matchingCandidates.length === 0) {
     return undefined;
   }
 
-  const secureCandidate = ordered.find((candidate) => candidate.protocol === "https:");
-  const fallbackCandidate = ordered[0];
+  const secureCandidate = matchingCandidates.find(
+    (candidate) => candidate.protocol === "https:",
+  );
+  const fallbackCandidate = matchingCandidates[0];
 
   return (secureCandidate ?? fallbackCandidate)?.toString();
 }

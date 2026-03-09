@@ -53,7 +53,9 @@ Must finish before Phase 2:
 - [x] Implement managed `cloudflared`/`ngrok` process lifecycle and automatic URL discovery (remove manual `ORQIS_*_PUBLIC_URL` requirement)
   - Summary: Replaced static env-only tunnel adapters with managed `cloudflared`/`ngrok` process launch/stop flows, automatic public URL discovery, clear missing-binary diagnostics, and deterministic fallback coverage.
   - Changed: `packages/tunnel/src/index.ts`, `packages/tunnel/test/scaffold.test.ts`, `apps/cli/test/init.test.ts`, `README.md`, `TODO.md`.
-- [ ] Tighten ngrok public URL discovery to fail when API tunnels do not target the requested local runtime address (avoid falling back to unrelated tunnels)
+- [x] Tighten ngrok public URL discovery to fail when API tunnels do not target the requested local runtime address (avoid falling back to unrelated tunnels)
+  - Summary: Restricted ngrok API URL selection to tunnels whose `config.addr` matches the requested local runtime target, eliminating fallback to mismatched API tunnels.
+  - Changed: `packages/tunnel/src/index.ts`, `packages/tunnel/test/scaffold.test.ts`, `TODO.md`.
 
 Safe to defer while Phase 2 starts:
 - [x] Fix `orqis init` config schema-version mismatch for reruns against existing `schemaVersion: 2` configs
