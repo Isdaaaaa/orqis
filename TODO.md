@@ -17,8 +17,10 @@ Implement the `orqis init` vertical slice: local runtime boot + tunnel URL hando
   - Summary: Added a minimal TypeScript `pnpm` monorepo scaffold with package-local build/typecheck/test scripts, placeholder tests in each workspace package, and a filtered package smoke command.
   - Changed: `.gitignore`, `package.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml`, `tsconfig.base.json`, `apps/cli/*`, `apps/web/*`, `packages/core/*`, `packages/db/*`, `packages/tunnel/*` (including package-local devDependencies and filtered-script smoke coverage).
 
-- [ ] Implement `orqis init` command with config bootstrap
+- [x] Implement `orqis init` command with config bootstrap
   - Acceptance criteria: command creates local config directory and idempotently updates config without data loss.
+  - Summary: Added an executable `orqis init` command that bootstraps `config.json`, merges missing defaults without overwriting existing user values, and reports created/updated/unchanged status.
+  - Changed: `apps/cli/src/cli.ts`, `apps/cli/src/config.ts`, `apps/cli/src/index.ts`, `apps/cli/test/init.test.ts`, `apps/cli/package.json`, `pnpm-lock.yaml`.
 
 - [ ] Add web runtime launcher and health checks from CLI
   - Acceptance criteria: CLI starts web runtime, confirms health endpoint, and exits with clear errors when startup fails.
