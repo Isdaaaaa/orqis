@@ -115,6 +115,41 @@ describe("@orqis/tunnel", () => {
     expect(process.killSignals).toEqual(["SIGTERM"]);
   });
 
+  it("ignores Cloudflare disclaimer links and waits for the quick tunnel URL", async () => {
+    const process = new FakeChildProcess();
+    const spawnProcess = vi.fn(() => process.asChildProcess());
+
+    const startPromise = createCloudflareTunnelAdapter({
+      discoveryPollIntervalMs: 1,
+      discoveryTimeoutMs: 500,
+      sleep: async () => undefined,
+      spawnProcess,
+    }).start({
+      localUrl: "http://127.0.0.1:43110",
+    });
+
+    process.emitStderr(
+      "INF ... terms of use (https://www.cloudflare.com/website-terms/) ...\n",
+    );
+    await Promise.resolve();
+    process.emitStderr(
+      "INF ... following: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps\n",
+    );
+    await Promise.resolve();
+    process.emitStderr(
+      "INF |  https://subsection-resolution-farmers-inspiration.trycloudflare.com |\n",
+    );
+
+    const session = await startPromise;
+
+    expect(session.publicUrl).toBe(
+      "https://subsection-resolution-farmers-inspiration.trycloudflare.com/",
+    );
+
+    await session.stop();
+    expect(process.killSignals).toEqual(["SIGTERM"]);
+  });
+
   it("starts ngrok and auto-discovers the public URL from ngrok API", async () => {
     const process = new FakeChildProcess();
     const spawnProcess = vi.fn(() => process.asChildProcess());
