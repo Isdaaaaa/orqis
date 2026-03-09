@@ -73,6 +73,29 @@ function throwConfigShapeError(
   );
 }
 
+function validateSchemaVersionShape(
+  config: Record<string, unknown>,
+  configFilePath: string,
+): void {
+  const schemaVersion = config.schemaVersion;
+
+  if (schemaVersion === undefined) {
+    return;
+  }
+
+  if (
+    typeof schemaVersion !== "number" ||
+    !Number.isInteger(schemaVersion) ||
+    schemaVersion < 1
+  ) {
+    throwConfigShapeError(
+      configFilePath,
+      "schemaVersion",
+      `must be an integer >= 1 when provided (received ${valueType(schemaVersion)})`,
+    );
+  }
+}
+
 function validateRuntimeConfigShape(
   config: Record<string, unknown>,
   configFilePath: string,
@@ -156,6 +179,7 @@ function validateExistingConfigShape(
   config: Record<string, unknown>,
   configFilePath: string,
 ): void {
+  validateSchemaVersionShape(config, configFilePath);
   validateRuntimeConfigShape(config, configFilePath);
   validateTunnelConfigShape(config, configFilePath);
 }

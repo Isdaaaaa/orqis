@@ -97,6 +97,26 @@ describe("orqis init config bootstrap", () => {
     ).rejects.toThrowError(/"runtime" must be an object when provided/);
   });
 
+  it.each([
+    {
+      label: "has invalid type",
+      rawConfig: '{"schemaVersion":"1"}\n',
+    },
+    {
+      label: "has invalid range",
+      rawConfig: '{"schemaVersion":0}\n',
+    },
+  ])("fails fast when schemaVersion $label", async ({ rawConfig }) => {
+    const configDir = await makeTempDir("orqis-init-invalid-schema-version-");
+    const configPath = join(configDir, ORQIS_CONFIG_FILE_NAME);
+
+    await writeFile(`${configPath}`, rawConfig);
+
+    await expect(
+      bootstrapOrqisConfig({ configDir }),
+    ).rejects.toThrowError(/"schemaVersion" must be an integer >= 1/);
+  });
+
   it("resolves config dir from ORQIS_CONFIG_DIR when no option is passed", async () => {
     const configDir = await makeTempDir("orqis-init-env-dir-");
 
@@ -126,5 +146,11 @@ describe("orqis init config bootstrap", () => {
 
     expect(exitCode).toBe(0);
     expect(log).toHaveBeenCalledWith("orqis init: created");
+  });
+
+  it("returns non-zero for invalid CLI arguments without throwing", async () => {
+    const exitCode = await runCli(["node", "orqis", "bogus"]);
+
+    expect(exitCode).toBe(1);
   });
 });

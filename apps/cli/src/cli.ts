@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 
-import { Command } from "commander";
+import { Command, CommanderError } from "commander";
 import { pathToFileURL } from "node:url";
 
 import { bootstrapOrqisConfig } from "./config.js";
 
 export async function runCli(argv: string[] = process.argv): Promise<number> {
   const program = new Command();
+  program.exitOverride();
 
   program
     .name("orqis")
@@ -28,7 +29,15 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
       console.log(`config_file=${result.configFilePath}`);
     });
 
-  await program.parseAsync(argv);
+  try {
+    await program.parseAsync(argv);
+  } catch (error) {
+    if (error instanceof CommanderError) {
+      return error.exitCode;
+    }
+
+    throw error;
+  }
 
   return 0;
 }
@@ -38,10 +47,16 @@ const isEntrypoint =
   import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isEntrypoint) {
-  runCli().catch((error) => {
-    const message =
-      error instanceof Error ? error.message : "Unknown CLI error.";
-    console.error(message);
-    process.exitCode = 1;
-  });
+  runCli()
+    .then((exitCode) => {
+      if (exitCode !== 0) {
+        process.exitCode = exitCode;
+      }
+    })
+    .catch((error) => {
+      const message =
+        error instanceof Error ? error.message : "Unknown CLI error.";
+      console.error(message);
+      process.exitCode = 1;
+    });
 }
