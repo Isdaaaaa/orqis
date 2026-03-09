@@ -57,6 +57,7 @@ Safe to defer while Phase 2 starts:
 - [ ] Add CLI regression coverage that asserts `--health-timeout-ms` rejects non-numeric suffix input (for example `10abc`)
 - [ ] Add signal-shutdown test coverage for `waitForRuntimeShutdown` (listener cleanup and runtime stop invocation)
 - [ ] Harden the `orqis init` smoke test against reserved-port race conditions (avoid probe-release-then-bind assumptions)
+- [ ] Add an integration test that runs the real `apps/web/src/runtime-process.ts` entrypoint and asserts IPC ready/start-error messages plus graceful shutdown on parent disconnect
 
 ## Phase 2: Projects and persistent workspaces
 
