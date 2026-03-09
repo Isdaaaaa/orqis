@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
+import { fork, type ChildProcess } from "node:child_process";
 import { Command, CommanderError } from "commander";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
@@ -11,6 +12,12 @@ import {
 
 const DEFAULT_WEB_RUNTIME_HEALTH_TIMEOUT_MS = 5_000;
 const DEFAULT_WEB_RUNTIME_HEALTH_INTERVAL_MS = 100;
+const DEFAULT_WEB_RUNTIME_PROCESS_START_TIMEOUT_MS = 5_000;
+const DEFAULT_WEB_RUNTIME_PROCESS_STOP_TIMEOUT_MS = 5_000;
+const WEB_RUNTIME_PROCESS_HOST_ENV_VAR = "ORQIS_WEB_RUNTIME_HOST";
+const WEB_RUNTIME_PROCESS_PORT_ENV_VAR = "ORQIS_WEB_RUNTIME_PORT";
+const WEB_RUNTIME_READY_MESSAGE_TYPE = "orqis:web-runtime-ready";
+const WEB_RUNTIME_START_ERROR_MESSAGE_TYPE = "orqis:web-runtime-start-error";
 
 interface RuntimeConfig {
   readonly host: string;
@@ -21,6 +28,18 @@ interface WebRuntimeHandle {
   readonly baseUrl: string;
   readonly healthUrl: string;
   stop(): Promise<void>;
+}
+
+interface WebRuntimeReadyMessage {
+  readonly type: typeof WEB_RUNTIME_READY_MESSAGE_TYPE;
+  readonly baseUrl: string;
+  readonly healthUrl: string;
+}
+
+interface WebRuntimeStartErrorMessage {
+  readonly type: typeof WEB_RUNTIME_START_ERROR_MESSAGE_TYPE;
+  readonly message: string;
+  readonly code?: string;
 }
 
 interface TunnelStartOptions {
@@ -55,11 +74,19 @@ type StartWebRuntime = (options: RuntimeConfig) => Promise<WebRuntimeHandle>;
 type StartTunnel = (options: TunnelStartOptions) => Promise<TunnelSession>;
 type FetchLike = typeof fetch;
 type Sleep = (durationMs: number) => Promise<void>;
+type ResolveWebRuntimeProcessEntrypoint = () => Promise<string | undefined>;
+type ForkProcess = typeof fork;
+
+interface StartWebRuntimeWithDefaultModuleDependencies {
+  readonly resolveProcessEntrypoint?: ResolveWebRuntimeProcessEntrypoint;
+  readonly forkProcess?: ForkProcess;
+}
 
 interface RunCliDependencies {
   bootstrapConfig?: typeof bootstrapOrqisConfig;
   startWebRuntime?: StartWebRuntime;
   startTunnel?: StartTunnel;
+  resolveWebRuntimeProcessEntrypoint?: ResolveWebRuntimeProcessEntrypoint;
   fetchImpl?: FetchLike;
   sleep?: Sleep;
   waitForShutdown?: (runtime: WebRuntimeHandle) => Promise<void>;
@@ -155,6 +182,250 @@ function delay(durationMs: number): Promise<void> {
   });
 }
 
+function isWebRuntimeReadyMessage(
+  message: unknown,
+): message is WebRuntimeReadyMessage {
+  if (!isRecord(message)) {
+    return false;
+  }
+
+  return (
+    message.type === WEB_RUNTIME_READY_MESSAGE_TYPE &&
+    typeof message.baseUrl === "string" &&
+    typeof message.healthUrl === "string"
+  );
+}
+
+function isWebRuntimeStartErrorMessage(
+  message: unknown,
+): message is WebRuntimeStartErrorMessage {
+  if (!isRecord(message)) {
+    return false;
+  }
+
+  if (
+    message.type !== WEB_RUNTIME_START_ERROR_MESSAGE_TYPE ||
+    typeof message.message !== "string"
+  ) {
+    return false;
+  }
+
+  return message.code === undefined || typeof message.code === "string";
+}
+
+function createErrorWithCode(
+  message: string,
+  code?: string,
+): NodeJS.ErrnoException {
+  const error = new Error(message) as NodeJS.ErrnoException;
+  error.code = code;
+  return error;
+}
+
+function hasExited(child: ChildProcess): boolean {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+function waitForRuntimeProcessExit(
+  child: ChildProcess,
+  timeoutMs: number,
+): Promise<void> {
+  if (hasExited(child)) {
+    return Promise.resolve();
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    let done = false;
+
+    const finish = (callback: () => void): void => {
+      if (done) {
+        return;
+      }
+
+      done = true;
+      clearTimeout(timeout);
+      child.off("error", onError);
+      child.off("exit", onExit);
+      callback();
+    };
+
+    const onError = (error: Error): void => {
+      finish(() => reject(error));
+    };
+
+    const onExit = (
+      code: number | null,
+      signal: NodeJS.Signals | null,
+    ): void => {
+      if (
+        code === 0 ||
+        signal === "SIGTERM" ||
+        signal === "SIGKILL" ||
+        signal === "SIGINT"
+      ) {
+        finish(resolve);
+        return;
+      }
+
+      finish(() => {
+        reject(
+          new Error(
+            `Web runtime process exited unexpectedly while stopping (code=${code ?? "null"}, signal=${signal ?? "none"}).`,
+          ),
+        );
+      });
+    };
+
+    const timeout = setTimeout(() => {
+      if (!hasExited(child)) {
+        child.kill("SIGKILL");
+      }
+
+      finish(() => {
+        reject(
+          new Error(
+            `Web runtime process did not exit within ${timeoutMs}ms after SIGTERM.`,
+          ),
+        );
+      });
+    }, timeoutMs);
+
+    timeout.unref?.();
+    child.once("error", onError);
+    child.once("exit", onExit);
+
+    const sent = child.kill("SIGTERM");
+
+    if (!sent && !hasExited(child)) {
+      finish(() => {
+        reject(new Error("Failed to send SIGTERM to web runtime process."));
+      });
+    }
+  });
+}
+
+async function resolveWebRuntimeProcessEntrypoint(): Promise<
+  string | undefined
+> {
+  const candidates = [new URL("../../web/dist/runtime-process.js", import.meta.url)];
+
+  for (const candidate of candidates) {
+    const candidatePath = fileURLToPath(candidate);
+
+    if (existsSync(candidatePath)) {
+      return candidatePath;
+    }
+  }
+
+  return undefined;
+}
+
+async function startWebRuntimeInDedicatedProcess(
+  options: RuntimeConfig,
+  dependencies: {
+    readonly entrypointPath: string;
+    readonly forkProcess?: ForkProcess;
+  },
+): Promise<WebRuntimeHandle> {
+  const forkProcess = dependencies.forkProcess ?? fork;
+  const runtimeProcess = forkProcess(dependencies.entrypointPath, [], {
+    stdio: ["ignore", "inherit", "inherit", "ipc"],
+    env: {
+      ...process.env,
+      [WEB_RUNTIME_PROCESS_HOST_ENV_VAR]: options.host,
+      [WEB_RUNTIME_PROCESS_PORT_ENV_VAR]: String(options.port),
+    },
+  });
+
+  let stopPromise: Promise<void> | undefined;
+
+  const stop = async (): Promise<void> => {
+    if (stopPromise !== undefined) {
+      return stopPromise;
+    }
+
+    stopPromise = waitForRuntimeProcessExit(
+      runtimeProcess,
+      DEFAULT_WEB_RUNTIME_PROCESS_STOP_TIMEOUT_MS,
+    );
+
+    return stopPromise;
+  };
+
+  return new Promise<WebRuntimeHandle>((resolve, reject) => {
+    let settled = false;
+    let startupTimeout: NodeJS.Timeout | undefined;
+
+    const finish = (callback: () => void): void => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      if (startupTimeout !== undefined) {
+        clearTimeout(startupTimeout);
+      }
+      runtimeProcess.off("message", onMessage);
+      runtimeProcess.off("error", onError);
+      runtimeProcess.off("exit", onExit);
+      callback();
+    };
+
+    const onMessage = (message: unknown): void => {
+      if (isWebRuntimeReadyMessage(message)) {
+        finish(() => {
+          resolve({
+            baseUrl: message.baseUrl,
+            healthUrl: message.healthUrl,
+            stop,
+          });
+        });
+        return;
+      }
+
+      if (isWebRuntimeStartErrorMessage(message)) {
+        void stop().catch(() => undefined);
+        finish(() => reject(createErrorWithCode(message.message, message.code)));
+      }
+    };
+
+    const onError = (error: Error): void => {
+      void stop().catch(() => undefined);
+      finish(() => reject(error));
+    };
+
+    const onExit = (
+      code: number | null,
+      signal: NodeJS.Signals | null,
+    ): void => {
+      finish(() => {
+        reject(
+          new Error(
+            `Web runtime process exited before signaling readiness (code=${code ?? "null"}, signal=${signal ?? "none"}).`,
+          ),
+        );
+      });
+    };
+
+    runtimeProcess.on("message", onMessage);
+    runtimeProcess.once("error", onError);
+    runtimeProcess.once("exit", onExit);
+
+    startupTimeout = setTimeout(() => {
+      void stop().catch(() => undefined);
+      finish(() => {
+        reject(
+          new Error(
+            `Web runtime process did not signal readiness within ${DEFAULT_WEB_RUNTIME_PROCESS_START_TIMEOUT_MS}ms.`,
+          ),
+        );
+      });
+    }, DEFAULT_WEB_RUNTIME_PROCESS_START_TIMEOUT_MS);
+
+    startupTimeout.unref?.();
+  });
+}
+
 async function loadWebRuntimeStarter(): Promise<StartWebRuntime> {
   const moduleCandidates = [
     new URL("../../web/dist/index.js", import.meta.url),
@@ -219,7 +490,21 @@ async function loadTunnelStarter(): Promise<StartTunnel> {
 
 async function startWebRuntimeWithDefaultModule(
   options: RuntimeConfig,
+  dependencies: StartWebRuntimeWithDefaultModuleDependencies = {},
 ): Promise<WebRuntimeHandle> {
+  const resolveEntrypoint =
+    dependencies.resolveProcessEntrypoint ?? resolveWebRuntimeProcessEntrypoint;
+  const runtimeProcessEntrypoint = await resolveEntrypoint();
+
+  if (runtimeProcessEntrypoint !== undefined) {
+    return startWebRuntimeInDedicatedProcess(options, {
+      entrypointPath: runtimeProcessEntrypoint,
+      forkProcess: dependencies.forkProcess,
+    });
+  }
+
+  // Source-mode fallback for local tests/runs when the web runtime process artifact
+  // has not been built yet.
   const startWebRuntime = await loadWebRuntimeStarter();
   return startWebRuntime(options);
 }
@@ -396,7 +681,12 @@ export async function startOrqisInitSession(
 ): Promise<OrqisInitSession> {
   const bootstrapConfig = dependencies.bootstrapConfig ?? bootstrapOrqisConfig;
   const startWebRuntime =
-    dependencies.startWebRuntime ?? startWebRuntimeWithDefaultModule;
+    dependencies.startWebRuntime ??
+    ((runtimeConfig: RuntimeConfig) =>
+      startWebRuntimeWithDefaultModule(runtimeConfig, {
+        resolveProcessEntrypoint:
+          dependencies.resolveWebRuntimeProcessEntrypoint,
+      }));
   const startTunnel = dependencies.startTunnel ?? startTunnelWithDefaultModule;
   const fetchImpl = dependencies.fetchImpl ?? fetch;
   const sleep = dependencies.sleep ?? delay;

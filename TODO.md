@@ -47,7 +47,9 @@ Split the scaffold web runtime into a dedicated process to unblock managed tunne
 #### Hardening before Phase 2
 
 Must finish before Phase 2:
-- [ ] Split the scaffold web runtime into a dedicated process before tunnel-provider lifecycle management lands
+- [x] Split the scaffold web runtime into a dedicated process before tunnel-provider lifecycle management lands
+  - Summary: Updated `orqis init` to launch the web scaffold in a managed child process with readiness messaging, graceful stop handling, and source-mode fallback when runtime process artifacts are not built.
+  - Changed: `apps/cli/src/cli.ts`, `apps/cli/test/init.test.ts`, `apps/cli/test/fixtures/web-runtime-ready.mjs`, `apps/cli/test/fixtures/web-runtime-start-error.mjs`, `apps/web/src/runtime-process.ts`, `apps/web/test/runtime-process.test.ts`.
 - [ ] Implement managed `cloudflared`/`ngrok` process lifecycle and automatic URL discovery (remove manual `ORQIS_*_PUBLIC_URL` requirement)
 
 Safe to defer while Phase 2 starts:
@@ -55,6 +57,7 @@ Safe to defer while Phase 2 starts:
 - [ ] Add CLI regression coverage that asserts `--health-timeout-ms` rejects non-numeric suffix input (for example `10abc`)
 - [ ] Add signal-shutdown test coverage for `waitForRuntimeShutdown` (listener cleanup and runtime stop invocation)
 - [ ] Harden the `orqis init` smoke test against reserved-port race conditions (avoid probe-release-then-bind assumptions)
+- [ ] Add an integration test that runs the real `apps/web/src/runtime-process.ts` entrypoint and asserts IPC ready/start-error messages plus graceful shutdown on parent disconnect
 
 ## Phase 2: Projects and persistent workspaces
 

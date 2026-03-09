@@ -3,7 +3,7 @@ import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -135,6 +135,10 @@ async function reserveAvailablePort(): Promise<number> {
 
   await closeServer(probe);
   return address.port;
+}
+
+function resolveFixturePath(fileName: string): string {
+  return fileURLToPath(new URL(`./fixtures/${fileName}`, import.meta.url));
 }
 
 afterEach(async () => {
@@ -578,6 +582,73 @@ describe("orqis init runtime bootstrap", () => {
     await session.runtime.stop();
     expect(runtimeStopCalls).toBe(1);
     expect(tunnelStopCalls).toBe(1);
+  });
+
+  it("starts and stops the web runtime in a dedicated child process", async () => {
+    const configDir = await makeTempDir("orqis-init-runtime-process-");
+    let tunnelStopCalls = 0;
+
+    const session = await startOrqisInitSession(
+      {
+        configDir,
+      },
+      {
+        fetchImpl: async () =>
+          new Response(
+            JSON.stringify({
+              service: "@orqis/web",
+              status: "ok",
+              uptimeMs: 1,
+            }),
+            {
+              status: 200,
+              headers: {
+                "content-type": "application/json; charset=utf-8",
+              },
+            },
+          ),
+        resolveWebRuntimeProcessEntrypoint: async () =>
+          resolveFixturePath("web-runtime-ready.mjs"),
+        startTunnel: async () => ({
+          provider: "cloudflare",
+          publicUrl: "https://orqis-runtime-process.trycloudflare.com",
+          metadata: {
+            strategy: "cloudflare-first-fallback",
+            attemptedProviders: ["cloudflare"],
+          },
+          stop: async () => {
+            tunnelStopCalls += 1;
+          },
+        }),
+      },
+    );
+
+    expect(session.localUrl).toBe("http://127.0.0.1:43110");
+    expect(session.healthUrl).toBe("http://127.0.0.1:43110/health");
+
+    await session.runtime.stop();
+    await session.runtime.stop();
+    expect(tunnelStopCalls).toBe(1);
+  });
+
+  it("surfaces dedicated runtime process startup errors as runtime launch failures", async () => {
+    const configDir = await makeTempDir("orqis-init-runtime-process-error-");
+    const error = vi.spyOn(console, "error").mockImplementation(() => {
+      return;
+    });
+
+    const exitCode = await runCli(
+      ["node", "orqis", "init", "--config-dir", configDir],
+      {
+        resolveWebRuntimeProcessEntrypoint: async () =>
+          resolveFixturePath("web-runtime-start-error.mjs"),
+      },
+    );
+
+    expect(exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringMatching(/port is already in use/),
+    );
   });
 
   it("returns clear errors when the web runtime port is already in use", async () => {
