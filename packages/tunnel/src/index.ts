@@ -47,7 +47,6 @@ export interface StartTunnelWithFallbackOptions {
 
 interface StaticTunnelAdapterOptions {
   readonly provider: string;
-  readonly defaultDomain: string;
   readonly disableEnvVar: string;
   readonly publicUrlEnvVar: string;
 }
@@ -111,36 +110,9 @@ function buildAdapterMap(adapters?: readonly TunnelAdapter[]): Map<string, Tunne
   return adapterMap;
 }
 
-function resolveDefaultPublicUrl(
-  localUrl: string,
-  defaultDomain: string,
-): string {
-  let parsedLocalUrl: URL;
-
-  try {
-    parsedLocalUrl = new URL(localUrl);
-  } catch {
-    throw new Error(`Invalid local URL "${localUrl}".`);
-  }
-
-  const hostToken = parsedLocalUrl.hostname
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-")
-    .replace(/--+/g, "-")
-    .replace(/^-|-$/g, "");
-  const portToken =
-    parsedLocalUrl.port.length > 0
-      ? `-${parsedLocalUrl.port.replace(/[^0-9]/g, "")}`
-      : "";
-
-  return `https://orqis-${hostToken || "local"}${portToken}.${defaultDomain}`;
-}
-
 function resolvePublicUrl(
-  localUrl: string,
   provider: string,
   publicUrlEnvVar: string,
-  defaultDomain: string,
 ): string {
   const configuredPublicUrl = process.env[publicUrlEnvVar]?.trim();
 
@@ -167,7 +139,9 @@ function resolvePublicUrl(
     return parsedConfiguredUrl.toString();
   }
 
-  return resolveDefaultPublicUrl(localUrl, defaultDomain);
+  throw new Error(
+    `${provider} adapter requires ${publicUrlEnvVar} to be set until managed tunnel lifecycle is implemented.`,
+  );
 }
 
 function createStaticTunnelAdapter(
@@ -176,7 +150,7 @@ function createStaticTunnelAdapter(
   return {
     provider: options.provider,
     start: async (
-      startOptions: TunnelAdapterStartOptions,
+      _startOptions: TunnelAdapterStartOptions,
     ): Promise<TunnelProviderSession> => {
       if (process.env[options.disableEnvVar] === "1") {
         throw new Error(
@@ -185,10 +159,8 @@ function createStaticTunnelAdapter(
       }
 
       const publicUrl = resolvePublicUrl(
-        startOptions.localUrl,
         options.provider,
         options.publicUrlEnvVar,
-        options.defaultDomain,
       );
 
       return {
@@ -203,7 +175,6 @@ function createStaticTunnelAdapter(
 export function createCloudflareTunnelAdapter(): TunnelAdapter {
   return createStaticTunnelAdapter({
     provider: "cloudflare",
-    defaultDomain: "trycloudflare.com",
     disableEnvVar: ORQIS_DISABLE_CLOUDFLARE_TUNNEL_ENV_VAR,
     publicUrlEnvVar: ORQIS_CLOUDFLARE_PUBLIC_URL_ENV_VAR,
   });
@@ -212,7 +183,6 @@ export function createCloudflareTunnelAdapter(): TunnelAdapter {
 export function createNgrokTunnelAdapter(): TunnelAdapter {
   return createStaticTunnelAdapter({
     provider: "ngrok",
-    defaultDomain: "ngrok-free.app",
     disableEnvVar: ORQIS_DISABLE_NGROK_TUNNEL_ENV_VAR,
     publicUrlEnvVar: ORQIS_NGROK_PUBLIC_URL_ENV_VAR,
   });
