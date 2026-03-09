@@ -42,6 +42,7 @@ Implement the `orqis init` vertical slice: local runtime boot + tunnel URL hando
 #### Hardening before Phase 2
 
 - [ ] Split the scaffold web runtime into a dedicated process before tunnel-provider lifecycle management lands
+- [ ] Tighten `orqis init --health-timeout-ms` validation to reject non-numeric suffix input (for example `10abc`)
 
 ## Phase 2: Projects and persistent workspaces
 
