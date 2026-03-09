@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -198,6 +198,58 @@ describe("orqis init config bootstrap", () => {
     await expect(
       bootstrapOrqisConfig({ configDir }),
     ).rejects.toThrowError(/Cannot parse config file at .*\. Fix invalid JSON and retry\./);
+  });
+
+  it("preserves non-parse syntax errors thrown by migrations", async () => {
+    const configDir = await makeTempDir("orqis-init-migration-syntax-error-");
+    const configPath = join(configDir, ORQIS_CONFIG_FILE_NAME);
+
+    await writeFile(`${configPath}`, '{"schemaVersion":1}\n');
+
+    await expect(
+      bootstrapOrqisConfig({
+        configDir,
+        targetSchemaVersion: 2,
+        migrations: {
+          1: () => {
+            throw new SyntaxError("migration failure");
+          },
+        },
+      }),
+    ).rejects.toMatchObject({
+      name: "SyntaxError",
+      message: "migration failure",
+    });
+  });
+
+  it("creates config artifacts with restrictive permissions", async () => {
+    const rootDir = await makeTempDir("orqis-init-permissions-create-root-");
+    const configDir = join(rootDir, "orqis-config");
+    const configPath = join(configDir, ORQIS_CONFIG_FILE_NAME);
+
+    await bootstrapOrqisConfig({ configDir });
+
+    expect((await stat(configDir)).mode & 0o777).toBe(0o700);
+    expect((await stat(configPath)).mode & 0o777).toBe(0o600);
+  });
+
+  it("normalizes existing config permissions even when config content is unchanged", async () => {
+    const configDir = await makeTempDir("orqis-init-permissions-normalize-");
+    const configPath = join(configDir, ORQIS_CONFIG_FILE_NAME);
+
+    await writeFile(
+      `${configPath}`,
+      `${JSON.stringify(DEFAULT_ORQIS_CONFIG, null, 2)}\n`,
+      { mode: 0o664 },
+    );
+    await chmod(configDir, 0o775);
+    await chmod(configPath, 0o664);
+
+    const result = await bootstrapOrqisConfig({ configDir });
+
+    expect(result.status).toBe("unchanged");
+    expect((await stat(configDir)).mode & 0o777).toBe(0o700);
+    expect((await stat(configPath)).mode & 0o777).toBe(0o600);
   });
 
   it("resolves config dir from ORQIS_CONFIG_DIR when no option is passed", async () => {

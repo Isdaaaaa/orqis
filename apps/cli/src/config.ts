@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -6,6 +6,8 @@ export const ORQIS_CONFIG_DIR_ENV_VAR = "ORQIS_CONFIG_DIR";
 export const ORQIS_CONFIG_FILE_NAME = "config.json";
 export const ORQIS_CONFIG_SCHEMA_VERSION = 1;
 const ORQIS_CONFIG_BASELINE_SCHEMA_VERSION = 1;
+const ORQIS_CONFIG_DIR_MODE = 0o700;
+const ORQIS_CONFIG_FILE_MODE = 0o600;
 
 export const DEFAULT_ORQIS_CONFIG = {
   schemaVersion: ORQIS_CONFIG_SCHEMA_VERSION,
@@ -324,6 +326,46 @@ function toConfigContent(config: Record<string, unknown>): string {
   return `${JSON.stringify(config, null, 2)}\n`;
 }
 
+function parseConfigContent(
+  rawConfig: string,
+  configFilePath: string,
+): Record<string, unknown> {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(rawConfig) as unknown;
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error(
+        `Cannot parse config file at ${configFilePath}. Fix invalid JSON and retry.`,
+      );
+    }
+
+    throw error;
+  }
+
+  if (!isRecord(parsed)) {
+    throw new Error("Config file must contain a JSON object.");
+  }
+
+  return parsed;
+}
+
+async function normalizeConfigPermissions(
+  configDir: string,
+  configFilePath: string,
+): Promise<void> {
+  await chmod(configDir, ORQIS_CONFIG_DIR_MODE);
+
+  try {
+    await chmod(configFilePath, ORQIS_CONFIG_FILE_MODE);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+}
+
 export async function bootstrapOrqisConfig(
   options: BootstrapOrqisConfigOptions = {},
 ): Promise<BootstrapOrqisConfigResult> {
@@ -336,20 +378,15 @@ export async function bootstrapOrqisConfig(
   const configFilePath = join(configDir, ORQIS_CONFIG_FILE_NAME);
   const defaultConfig = createDefaultConfig(targetSchemaVersion);
 
-  await mkdir(configDir, { recursive: true });
+  await mkdir(configDir, { recursive: true, mode: ORQIS_CONFIG_DIR_MODE });
+  await normalizeConfigPermissions(configDir, configFilePath);
 
   let status: BootstrapStatus = "unchanged";
   let config = cloneValue(defaultConfig);
 
   try {
     const rawConfig = await readFile(configFilePath, "utf8");
-    const parsed = JSON.parse(rawConfig) as unknown;
-
-    if (!isRecord(parsed)) {
-      throw new Error("Config file must contain a JSON object.");
-    }
-
-    config = parsed;
+    config = parseConfigContent(rawConfig, configFilePath);
     const existingSchemaVersion = resolveExistingSchemaVersion(
       config,
       configFilePath,
@@ -369,21 +406,25 @@ export async function bootstrapOrqisConfig(
     );
 
     if (migrated || updated) {
-      await writeFile(configFilePath, toConfigContent(config), "utf8");
+      await writeFile(configFilePath, toConfigContent(config), {
+        encoding: "utf8",
+        mode: ORQIS_CONFIG_FILE_MODE,
+      });
       status = "updated";
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      await writeFile(configFilePath, toConfigContent(config), "utf8");
+      await writeFile(configFilePath, toConfigContent(config), {
+        encoding: "utf8",
+        mode: ORQIS_CONFIG_FILE_MODE,
+      });
       status = "created";
-    } else if (error instanceof SyntaxError) {
-      throw new Error(
-        `Cannot parse config file at ${configFilePath}. Fix invalid JSON and retry.`,
-      );
     } else {
       throw error;
     }
   }
+
+  await normalizeConfigPermissions(configDir, configFilePath);
 
   return {
     config,

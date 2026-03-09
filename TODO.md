@@ -22,6 +22,7 @@ Implement the `orqis init` vertical slice: local runtime boot + tunnel URL hando
   - Summary: Added an executable `orqis init` command that bootstraps `config.json`, merges missing defaults without overwriting existing user values, and reports created/updated/unchanged status.
   - Summary (follow-up): Added explicit schema migration hooks with a target-schema path plus a preflight migration-chain completeness guard for future schema upgrades.
   - Summary (follow-up): Added module-load validation and test coverage for the default migration chain to catch schema bumps without migrations immediately.
+  - Summary (follow-up): Scoped parse-error handling to JSON parsing only and enforced restrictive config artifact permissions with regression coverage.
   - Changed: `apps/cli/src/cli.ts`, `apps/cli/src/config.ts`, `apps/cli/src/index.ts`, `apps/cli/test/init.test.ts`, `apps/cli/package.json`, `pnpm-lock.yaml`.
 
 - [ ] Add web runtime launcher and health checks from CLI
