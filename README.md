@@ -71,6 +71,7 @@ Common commands:
 - `pnpm -r build`
 - `pnpm -r test`
 - `pnpm -r typecheck`
+- `pnpm orqis:init` (runs the built local CLI; global `orqis` install is not required yet)
 
 Current Phase 1 runtime behavior:
 
