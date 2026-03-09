@@ -8,6 +8,7 @@ export const ORQIS_CONFIG_SCHEMA_VERSION = 1;
 const ORQIS_CONFIG_BASELINE_SCHEMA_VERSION = 1;
 const ORQIS_CONFIG_DIR_MODE = 0o700;
 const ORQIS_CONFIG_FILE_MODE = 0o600;
+const ENFORCE_POSIX_PERMISSIONS = process.platform !== "win32";
 
 export const DEFAULT_ORQIS_CONFIG = {
   schemaVersion: ORQIS_CONFIG_SCHEMA_VERSION,
@@ -355,6 +356,10 @@ async function normalizeConfigPermissions(
   configDir: string,
   configFilePath: string,
 ): Promise<void> {
+  if (!ENFORCE_POSIX_PERMISSIONS) {
+    return;
+  }
+
   await chmod(configDir, ORQIS_CONFIG_DIR_MODE);
 
   try {
@@ -378,7 +383,12 @@ export async function bootstrapOrqisConfig(
   const configFilePath = join(configDir, ORQIS_CONFIG_FILE_NAME);
   const defaultConfig = createDefaultConfig(targetSchemaVersion);
 
-  await mkdir(configDir, { recursive: true, mode: ORQIS_CONFIG_DIR_MODE });
+  await mkdir(
+    configDir,
+    ENFORCE_POSIX_PERMISSIONS
+      ? { recursive: true, mode: ORQIS_CONFIG_DIR_MODE }
+      : { recursive: true },
+  );
   await normalizeConfigPermissions(configDir, configFilePath);
 
   let status: BootstrapStatus = "unchanged";
@@ -408,7 +418,7 @@ export async function bootstrapOrqisConfig(
     if (migrated || updated) {
       await writeFile(configFilePath, toConfigContent(config), {
         encoding: "utf8",
-        mode: ORQIS_CONFIG_FILE_MODE,
+        ...(ENFORCE_POSIX_PERMISSIONS ? { mode: ORQIS_CONFIG_FILE_MODE } : {}),
       });
       status = "updated";
     }
@@ -416,7 +426,7 @@ export async function bootstrapOrqisConfig(
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       await writeFile(configFilePath, toConfigContent(config), {
         encoding: "utf8",
-        mode: ORQIS_CONFIG_FILE_MODE,
+        ...(ENFORCE_POSIX_PERMISSIONS ? { mode: ORQIS_CONFIG_FILE_MODE } : {}),
       });
       status = "created";
     } else {

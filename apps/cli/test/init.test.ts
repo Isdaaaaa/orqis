@@ -16,6 +16,7 @@ import {
 } from "../src/config.ts";
 
 const tempRoots: string[] = [];
+const ENFORCE_POSIX_PERMISSIONS = process.platform !== "win32";
 
 async function makeTempDir(prefix: string): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), prefix));
@@ -229,6 +230,12 @@ describe("orqis init config bootstrap", () => {
 
     await bootstrapOrqisConfig({ configDir });
 
+    if (!ENFORCE_POSIX_PERMISSIONS) {
+      await expect(stat(configDir)).resolves.toBeDefined();
+      await expect(stat(configPath)).resolves.toBeDefined();
+      return;
+    }
+
     expect((await stat(configDir)).mode & 0o777).toBe(0o700);
     expect((await stat(configPath)).mode & 0o777).toBe(0o600);
   });
@@ -242,6 +249,14 @@ describe("orqis init config bootstrap", () => {
       `${JSON.stringify(DEFAULT_ORQIS_CONFIG, null, 2)}\n`,
       { mode: 0o664 },
     );
+
+    if (!ENFORCE_POSIX_PERMISSIONS) {
+      const result = await bootstrapOrqisConfig({ configDir });
+      expect(result.status).toBe("unchanged");
+      await expect(stat(configPath)).resolves.toBeDefined();
+      return;
+    }
+
     await chmod(configDir, 0o775);
     await chmod(configPath, 0o664);
 
