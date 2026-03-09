@@ -5,6 +5,7 @@ import { join } from "node:path";
 export const ORQIS_CONFIG_DIR_ENV_VAR = "ORQIS_CONFIG_DIR";
 export const ORQIS_CONFIG_FILE_NAME = "config.json";
 export const ORQIS_CONFIG_SCHEMA_VERSION = 1;
+const ORQIS_CONFIG_BASELINE_SCHEMA_VERSION = 1;
 
 export const DEFAULT_ORQIS_CONFIG = {
   schemaVersion: ORQIS_CONFIG_SCHEMA_VERSION,
@@ -26,8 +27,12 @@ export interface BootstrapOrqisConfigResult {
   status: BootstrapStatus;
 }
 
+export type OrqisConfigMigration = (config: Record<string, unknown>) => void;
+
 interface BootstrapOrqisConfigOptions {
   configDir?: string;
+  targetSchemaVersion?: number;
+  migrations?: Readonly<Record<number, OrqisConfigMigration>>;
 }
 
 export function resolveOrqisConfigDir(configDir?: string): string {
@@ -64,6 +69,31 @@ function valueType(value: unknown): string {
   return typeof value;
 }
 
+function resolveTargetSchemaVersion(targetSchemaVersion?: number): number {
+  if (targetSchemaVersion === undefined) {
+    return ORQIS_CONFIG_SCHEMA_VERSION;
+  }
+
+  if (
+    typeof targetSchemaVersion !== "number" ||
+    !Number.isInteger(targetSchemaVersion) ||
+    targetSchemaVersion < 1
+  ) {
+    throw new Error(
+      `Invalid target schema version "${String(targetSchemaVersion)}". Expected integer >= 1.`,
+    );
+  }
+
+  return targetSchemaVersion;
+}
+
+function createDefaultConfig(targetSchemaVersion: number): Record<string, unknown> {
+  return {
+    ...cloneValue(DEFAULT_ORQIS_CONFIG),
+    schemaVersion: targetSchemaVersion,
+  };
+}
+
 function throwConfigShapeError(
   configFilePath: string,
   keyPath: string,
@@ -74,14 +104,14 @@ function throwConfigShapeError(
   );
 }
 
-function validateSchemaVersionShape(
+function parseSchemaVersion(
   config: Record<string, unknown>,
   configFilePath: string,
-): void {
+): number | undefined {
   const schemaVersion = config.schemaVersion;
 
   if (schemaVersion === undefined) {
-    return;
+    return undefined;
   }
 
   if (
@@ -96,13 +126,57 @@ function validateSchemaVersionShape(
     );
   }
 
-  if (schemaVersion > ORQIS_CONFIG_SCHEMA_VERSION) {
+  return schemaVersion;
+}
+
+function resolveExistingSchemaVersion(
+  config: Record<string, unknown>,
+  configFilePath: string,
+  targetSchemaVersion: number,
+): number {
+  const schemaVersion =
+    parseSchemaVersion(config, configFilePath) ??
+    ORQIS_CONFIG_BASELINE_SCHEMA_VERSION;
+
+  if (schemaVersion > targetSchemaVersion) {
     throwConfigShapeError(
       configFilePath,
       "schemaVersion",
-      `is not supported by this CLI version (max supported ${ORQIS_CONFIG_SCHEMA_VERSION}, received ${schemaVersion})`,
+      `is not supported by this CLI version (max supported ${targetSchemaVersion}, received ${schemaVersion})`,
     );
   }
+
+  return schemaVersion;
+}
+
+function applySchemaMigrations(
+  config: Record<string, unknown>,
+  configFilePath: string,
+  schemaVersion: number,
+  targetSchemaVersion: number,
+  migrations: Readonly<Record<number, OrqisConfigMigration>>,
+): boolean {
+  let changed = false;
+  let workingVersion = schemaVersion;
+
+  while (workingVersion < targetSchemaVersion) {
+    const migration = migrations[workingVersion];
+
+    if (!migration) {
+      throwConfigShapeError(
+        configFilePath,
+        "schemaVersion",
+        `cannot migrate from ${workingVersion} to ${workingVersion + 1}; add migration handler`,
+      );
+    }
+
+    migration(config);
+    workingVersion += 1;
+    config.schemaVersion = workingVersion;
+    changed = true;
+  }
+
+  return changed;
 }
 
 function validateRuntimeConfigShape(
@@ -188,7 +262,7 @@ function validateExistingConfigShape(
   config: Record<string, unknown>,
   configFilePath: string,
 ): void {
-  validateSchemaVersionShape(config, configFilePath);
+  parseSchemaVersion(config, configFilePath);
   validateRuntimeConfigShape(config, configFilePath);
   validateTunnelConfigShape(config, configFilePath);
 }
@@ -223,13 +297,17 @@ function toConfigContent(config: Record<string, unknown>): string {
 export async function bootstrapOrqisConfig(
   options: BootstrapOrqisConfigOptions = {},
 ): Promise<BootstrapOrqisConfigResult> {
+  const targetSchemaVersion = resolveTargetSchemaVersion(
+    options.targetSchemaVersion,
+  );
   const configDir = resolveOrqisConfigDir(options.configDir);
   const configFilePath = join(configDir, ORQIS_CONFIG_FILE_NAME);
+  const defaultConfig = createDefaultConfig(targetSchemaVersion);
 
   await mkdir(configDir, { recursive: true });
 
   let status: BootstrapStatus = "unchanged";
-  let config = cloneValue(DEFAULT_ORQIS_CONFIG) as Record<string, unknown>;
+  let config = cloneValue(defaultConfig);
 
   try {
     const rawConfig = await readFile(configFilePath, "utf8");
@@ -240,13 +318,25 @@ export async function bootstrapOrqisConfig(
     }
 
     config = parsed;
+    const existingSchemaVersion = resolveExistingSchemaVersion(
+      config,
+      configFilePath,
+      targetSchemaVersion,
+    );
+    const migrated = applySchemaMigrations(
+      config,
+      configFilePath,
+      existingSchemaVersion,
+      targetSchemaVersion,
+      options.migrations ?? {},
+    );
     validateExistingConfigShape(config, configFilePath);
     const updated = mergeMissingDefaults(
       config,
-      cloneValue(DEFAULT_ORQIS_CONFIG) as Record<string, unknown>,
+      cloneValue(defaultConfig),
     );
 
-    if (updated) {
+    if (migrated || updated) {
       await writeFile(configFilePath, toConfigContent(config), "utf8");
       status = "updated";
     }

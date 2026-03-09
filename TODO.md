@@ -20,6 +20,7 @@ Implement the `orqis init` vertical slice: local runtime boot + tunnel URL hando
 - [x] Implement `orqis init` command with config bootstrap
   - Acceptance criteria: command creates local config directory and idempotently updates config without data loss.
   - Summary: Added an executable `orqis init` command that bootstraps `config.json`, merges missing defaults without overwriting existing user values, and reports created/updated/unchanged status.
+  - Summary (follow-up): Added explicit schema migration hooks with a target-schema path and fail-fast missing-migration guard for future schema upgrades.
   - Changed: `apps/cli/src/cli.ts`, `apps/cli/src/config.ts`, `apps/cli/src/index.ts`, `apps/cli/test/init.test.ts`, `apps/cli/package.json`, `pnpm-lock.yaml`.
 
 - [ ] Add web runtime launcher and health checks from CLI

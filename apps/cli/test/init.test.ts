@@ -132,6 +132,56 @@ describe("orqis init config bootstrap", () => {
     ).rejects.toThrowError(/"schemaVersion" is not supported by this CLI version/);
   });
 
+  it("applies explicit schema migrations when targeting a newer schema", async () => {
+    const configDir = await makeTempDir("orqis-init-schema-migrate-");
+    const configPath = join(configDir, ORQIS_CONFIG_FILE_NAME);
+
+    await writeFile(
+      `${configPath}`,
+      '{"schemaVersion":1,"legacyTunnelProvider":"cloudflare"}\n',
+    );
+
+    const result = await bootstrapOrqisConfig({
+      configDir,
+      targetSchemaVersion: 2,
+      migrations: {
+        1: (config) => {
+          const legacyProvider = config.legacyTunnelProvider;
+
+          if (typeof legacyProvider === "string") {
+            config.tunnel = { providers: [legacyProvider] };
+          }
+
+          delete config.legacyTunnelProvider;
+        },
+      },
+    });
+
+    expect(result.status).toBe("updated");
+    expect(result.config).toMatchObject({
+      schemaVersion: 2,
+      runtime: DEFAULT_ORQIS_CONFIG.runtime,
+      tunnel: {
+        providers: ["cloudflare"],
+      },
+    });
+    expect(result.config).not.toHaveProperty("legacyTunnelProvider");
+  });
+
+  it("fails fast when a required migration handler is missing", async () => {
+    const configDir = await makeTempDir("orqis-init-schema-migrate-missing-");
+    const configPath = join(configDir, ORQIS_CONFIG_FILE_NAME);
+
+    await writeFile(`${configPath}`, '{"schemaVersion":1}\n');
+
+    await expect(
+      bootstrapOrqisConfig({
+        configDir,
+        targetSchemaVersion: 2,
+      }),
+    ).rejects.toThrowError(/cannot migrate from 1 to 2; add migration handler/);
+  });
+
   it("fails fast when config contains invalid JSON", async () => {
     const configDir = await makeTempDir("orqis-init-invalid-json-");
     const configPath = join(configDir, ORQIS_CONFIG_FILE_NAME);
