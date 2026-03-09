@@ -457,6 +457,52 @@ describe("orqis init runtime bootstrap", () => {
     expect(sleep).toHaveBeenCalledTimes(1);
   });
 
+  it("aborts hanging health checks when the timeout is reached", async () => {
+    const fetchImpl = vi
+      .fn<(input: string | URL | Request, init?: RequestInit) => Promise<Response>>()
+      .mockImplementation((_input, init) => {
+        return new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+
+          if (signal == null) {
+            reject(new Error("missing abort signal"));
+            return;
+          }
+
+          if (signal.aborted) {
+            reject(new Error("health request aborted"));
+            return;
+          }
+
+          signal.addEventListener(
+            "abort",
+            () => {
+              reject(new Error("health request aborted"));
+            },
+            { once: true },
+          );
+        });
+      });
+    const startedAt = Date.now();
+
+    await expect(
+      waitForWebRuntimeHealth({
+        url: "http://127.0.0.1:43110/health",
+        fetchImpl,
+        intervalMs: 10,
+        timeoutMs: 50,
+      }),
+    ).rejects.toThrowError(/health request aborted/);
+
+    expect(Date.now() - startedAt).toBeLessThan(1_500);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "http://127.0.0.1:43110/health",
+      expect.objectContaining({
+        signal: expect.any(Object),
+      }),
+    );
+  });
+
   it("starts the runtime, waits for health, and returns URLs", async () => {
     const configDir = await makeTempDir("orqis-init-runtime-session-");
     let runtimeStopCalls = 0;
@@ -532,20 +578,39 @@ describe("orqis init runtime bootstrap", () => {
     await occupiedRuntime.stop();
   });
 
-  it("stops the runtime and surfaces health-check failures clearly", async () => {
+  it("stops the runtime and surfaces health-check timeout failures clearly", async () => {
     const configDir = await makeTempDir("orqis-init-health-failure-");
     const error = vi.spyOn(console, "error").mockImplementation(() => {
       return;
     });
-    const runtime = await createTestRuntime({
-      healthStatusCode: 503,
-      healthPayload: {
-        status: "starting",
-      },
-    });
     const stop = vi.fn(async () => {
-      await runtime.stop();
+      return;
     });
+    const fetchImpl = vi
+      .fn<(input: string | URL | Request, init?: RequestInit) => Promise<Response>>()
+      .mockImplementation((_input, init) => {
+        return new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+
+          if (signal == null) {
+            reject(new Error("missing abort signal"));
+            return;
+          }
+
+          if (signal.aborted) {
+            reject(new Error("health request aborted"));
+            return;
+          }
+
+          signal.addEventListener(
+            "abort",
+            () => {
+              reject(new Error("health request aborted"));
+            },
+            { once: true },
+          );
+        });
+      });
 
     const exitCode = await runCli(
       [
@@ -558,8 +623,10 @@ describe("orqis init runtime bootstrap", () => {
         "50",
       ],
       {
+        fetchImpl,
         startWebRuntime: async () => ({
-          ...runtime,
+          baseUrl: "http://127.0.0.1:43110",
+          healthUrl: "http://127.0.0.1:43110/health",
           stop,
         }),
       },

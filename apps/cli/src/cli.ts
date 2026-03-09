@@ -168,15 +168,26 @@ export async function waitForWebRuntimeHealth(
   const timeoutMs = options.timeoutMs ?? DEFAULT_WEB_RUNTIME_HEALTH_TIMEOUT_MS;
   const sleep = options.sleep ?? delay;
   const deadline = Date.now() + timeoutMs;
-  let lastError: unknown;
+  let lastError: unknown = new Error(`timed out after ${timeoutMs}ms`);
 
-  while (Date.now() <= deadline) {
+  while (true) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      break;
+    }
+
+    const abortController = new AbortController();
+    const requestTimeout = setTimeout(() => {
+      abortController.abort();
+    }, remainingMs);
+
     try {
       const response = await fetchImpl(options.url, {
         method: "GET",
         headers: {
           accept: "application/json",
         },
+        signal: abortController.signal,
       });
 
       if (!response.ok) {
@@ -196,9 +207,16 @@ export async function waitForWebRuntimeHealth(
       return;
     } catch (error) {
       lastError = error;
+    } finally {
+      clearTimeout(requestTimeout);
     }
 
-    await sleep(intervalMs);
+    const remainingAfterAttemptMs = deadline - Date.now();
+    if (remainingAfterAttemptMs <= 0) {
+      break;
+    }
+
+    await sleep(Math.min(intervalMs, remainingAfterAttemptMs));
   }
 
   throw new Error(getErrorMessage(lastError));
