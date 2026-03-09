@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Start Phase 2 by implementing project/workspace schema and migrations.
+Continue Phase 2 by implementing project creation flow in UI.
 
 ## Completed
 
@@ -74,11 +74,14 @@ Safe to defer while Phase 2 starts:
 
 ## Phase 2: Projects and persistent workspaces
 
-- [ ] Create project/workspace schema and migrations
+- [x] Create project/workspace schema and migrations
   - Acceptance criteria: schema includes projects, workspaces, messages, tasks, approvals, runs, and audit events.
   - Acceptance criteria: tasks support explicit state + lock ownership metadata (run-linked checkout/execution correlation fields) and parent-task lineage.
   - Acceptance criteria: approvals persist lifecycle + decision metadata (`pending`, `approved`, `rejected`, `revision_requested`, `resubmitted`).
   - Acceptance criteria: audit events are append-only with actor/entity/run correlation fields and indexed timeline queries.
+  - Summary: Added first-pass Drizzle table contracts plus an initial SQL migration for projects, workspaces, messages, tasks, approvals, runs, and append-only audit events with timeline indexes.
+  - Summary (follow-up): Added migration-contract tests that validate lifecycle/lock fields, approval statuses, correlation indexes, and audit append-only triggers.
+  - Changed: `packages/db/src/schema.ts`, `packages/db/migrations/0001_project_workspace_schema.sql`, `packages/db/src/migrations.ts`, `packages/db/src/index.ts`, `packages/db/test/migrations.test.ts`, `packages/db/test/scaffold.test.ts`, `packages/db/package.json`, `pnpm-lock.yaml`, `TODO.md`.
 
 - [ ] Build project creation flow in UI
   - Acceptance criteria: user can create/list/select projects and each project resolves to one persistent workspace.
@@ -92,12 +95,39 @@ Safe to defer while Phase 2 starts:
 - [ ] Add specialist-agent adapter registry contract in core/runtime boundaries
   - Acceptance criteria: adapter type registry supports execution + environment validation hooks and rejects unknown adapter types for task execution.
 
+#### Additional fixes discovered during Phase 2
+
+- [x] Fix migration-level workflow integrity gaps from schema review
+  - Summary: Enforced `project_id`/`workspace_id` pair integrity in `runs`, `messages`, `tasks`, `approvals`, and `audit_events` via composite foreign keys.
+  - Summary (follow-up): Removed mutable-entity foreign keys from `audit_events` (`run_id`, `task_id`, `approval_id`) so append-only triggers no longer conflict with parent-row cleanup.
+  - Summary (follow-up): Added executable in-memory migration behavior tests for cross-project mismatch rejection and append-only audit-event enforcement during parent cleanup.
+  - Changed: `packages/db/src/schema.ts`, `packages/db/migrations/0001_project_workspace_schema.sql`, `packages/db/test/migrations.test.ts`, `packages/db/package.json`, `pnpm-lock.yaml`, `TODO.md`.
+
+- [x] Enforce same-project/workspace linked reference invariants for `run_id`/`task_id`
+  - Summary: Added migration-level validation triggers that reject `messages`, `tasks`, and `approvals` inserts/updates when linked `run_id`/`task_id` values point to a different project/workspace.
+  - Summary (follow-up): Added executable regression coverage for cross-workspace `run_id`, `checkout_run_id`, `execution_run_id`, `task_id`, and `approvals.run_id` mismatches.
+  - Changed: `packages/db/migrations/0001_project_workspace_schema.sql`, `packages/db/src/schema.ts`, `packages/db/test/migrations.test.ts`, `TODO.md`.
+
+- [x] Guard run/task ownership-key updates from orphaning linked workspace references
+  - Summary: Added migration-level update guards that block `runs.project_id/workspace_id` and `tasks.project_id/workspace_id` changes when linked `messages`, `tasks`, or `approvals` rows would be left with mismatched project/workspace ownership.
+  - Summary (follow-up): Added executable regression coverage for orphaning update attempts on runs and tasks.
+  - Changed: `packages/db/migrations/0001_project_workspace_schema.sql`, `packages/db/test/migrations.test.ts`, `TODO.md`.
+
+- [x] Enforce same-project/workspace parent lineage invariants for `parent_task_id` and `parent_message_id`
+  - Summary: Added composite self-reference constraints for `messages` and `tasks` so parent-thread lineage cannot cross project/workspace boundaries.
+  - Summary (follow-up): Kept parent-delete nulling semantics while adding regression coverage for cross-project parent-link rejection.
+  - Changed: `packages/db/src/schema.ts`, `packages/db/migrations/0001_project_workspace_schema.sql`, `packages/db/test/migrations.test.ts`, `TODO.md`.
+
 #### Hardening before Phase 3
 
 Must finish before Phase 3:
 - [ ] Enforce task claim/ownership invariants at service level (single active execution lock per task and deterministic conflict errors)
 - [ ] Add regression tests proving guarded task/run transitions are blocked until required approvals are resolved
 - [ ] Add regression tests proving all task/approval/run mutations emit audit events with actor and run correlation metadata
+
+Unclassified:
+- [ ] Add migration regression coverage for `messages`/`tasks`/`approvals` update-path guards so same-project/workspace linked ref triggers are verified on updates, not only inserts
+- [ ] Add migration regression coverage proving `parent_task_id` and `parent_message_id` are nulled on parent delete after composite lineage constraints
 
 Move to later phase:
 - [ ] Add query helpers for issue/task-centric run history so timeline and run drill-down share one contract (Phase 4 timeline/read-model hardening)

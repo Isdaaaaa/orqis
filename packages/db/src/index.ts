@@ -7,3 +7,6 @@ export interface SqliteConfig {
 export function createDefaultSqliteConfig(): SqliteConfig {
   return { filename: "orqis.db" };
 }
+
+export * from "./migrations.js";
+export * from "./schema.js";
