@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Implement the `orqis init` vertical slice: local runtime boot + tunnel URL handoff.
+Split the scaffold web runtime into a dedicated process to unblock managed tunnel lifecycle and automatic public URL discovery.
 
 ## Completed
 
@@ -46,11 +46,14 @@ Implement the `orqis init` vertical slice: local runtime boot + tunnel URL hando
 
 #### Hardening before Phase 2
 
+Must finish before Phase 2:
 - [ ] Split the scaffold web runtime into a dedicated process before tunnel-provider lifecycle management lands
+- [ ] Implement managed `cloudflared`/`ngrok` process lifecycle and automatic URL discovery (remove manual `ORQIS_*_PUBLIC_URL` requirement)
+
+Safe to defer while Phase 2 starts:
 - [ ] Tighten `orqis init --health-timeout-ms` validation to reject non-numeric suffix input (for example `10abc`)
 - [ ] Add CLI regression coverage that asserts `--health-timeout-ms` rejects non-numeric suffix input (for example `10abc`)
 - [ ] Add signal-shutdown test coverage for `waitForRuntimeShutdown` (listener cleanup and runtime stop invocation)
-- [ ] Implement managed `cloudflared`/`ngrok` process lifecycle and automatic URL discovery (remove manual `ORQIS_*_PUBLIC_URL` requirement)
 - [ ] Harden the `orqis init` smoke test against reserved-port race conditions (avoid probe-release-then-bind assumptions)
 
 ## Phase 2: Projects and persistent workspaces
