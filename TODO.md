@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Start Phase 2 by implementing project/workspace schema and migrations.
+Continue Phase 2 by implementing project creation flow in UI.
 
 ## Completed
 
@@ -74,11 +74,14 @@ Safe to defer while Phase 2 starts:
 
 ## Phase 2: Projects and persistent workspaces
 
-- [ ] Create project/workspace schema and migrations
+- [x] Create project/workspace schema and migrations
   - Acceptance criteria: schema includes projects, workspaces, messages, tasks, approvals, runs, and audit events.
   - Acceptance criteria: tasks support explicit state + lock ownership metadata (run-linked checkout/execution correlation fields) and parent-task lineage.
   - Acceptance criteria: approvals persist lifecycle + decision metadata (`pending`, `approved`, `rejected`, `revision_requested`, `resubmitted`).
   - Acceptance criteria: audit events are append-only with actor/entity/run correlation fields and indexed timeline queries.
+  - Summary: Added first-pass Drizzle table contracts plus an initial SQL migration for projects, workspaces, messages, tasks, approvals, runs, and append-only audit events with timeline indexes.
+  - Summary (follow-up): Added migration-contract tests that validate lifecycle/lock fields, approval statuses, correlation indexes, and audit append-only triggers.
+  - Changed: `packages/db/src/schema.ts`, `packages/db/migrations/0001_project_workspace_schema.sql`, `packages/db/src/migrations.ts`, `packages/db/src/index.ts`, `packages/db/test/migrations.test.ts`, `packages/db/test/scaffold.test.ts`, `packages/db/package.json`, `pnpm-lock.yaml`, `TODO.md`.
 
 - [ ] Build project creation flow in UI
   - Acceptance criteria: user can create/list/select projects and each project resolves to one persistent workspace.

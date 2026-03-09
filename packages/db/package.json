@@ -6,7 +6,8 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
-    "dist"
+    "dist",
+    "migrations"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -14,7 +15,11 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "@types/node": "^20.0.0",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.1"
   }
 }
