@@ -137,10 +137,20 @@ export const messages = sqliteTable(
       name: "messages_project_id_workspace_id_workspaces_project_id_id_fk",
     }).onDelete("cascade"),
     foreignKey({
+      columns: [table.projectId, table.workspaceId, table.parentMessageId],
+      foreignColumns: [table.projectId, table.workspaceId, table.id],
+      name: "messages_project_id_workspace_id_parent_message_id_messages_project_id_workspace_id_id_fk",
+    }),
+    foreignKey({
       columns: [table.parentMessageId],
       foreignColumns: [table.id],
       name: "messages_parent_message_id_messages_id_fk",
     }).onDelete("set null"),
+    uniqueIndex("messages_project_id_workspace_id_id_unique").on(
+      table.projectId,
+      table.workspaceId,
+      table.id,
+    ),
     index("messages_workspace_created_at_idx").on(table.workspaceId, table.createdAt),
     index("messages_run_created_at_idx").on(table.runId, table.createdAt),
   ],
@@ -191,10 +201,20 @@ export const tasks = sqliteTable(
       name: "tasks_project_id_workspace_id_workspaces_project_id_id_fk",
     }).onDelete("cascade"),
     foreignKey({
+      columns: [table.projectId, table.workspaceId, table.parentTaskId],
+      foreignColumns: [table.projectId, table.workspaceId, table.id],
+      name: "tasks_project_id_workspace_id_parent_task_id_tasks_project_id_workspace_id_id_fk",
+    }),
+    foreignKey({
       columns: [table.parentTaskId],
       foreignColumns: [table.id],
       name: "tasks_parent_task_id_tasks_id_fk",
     }).onDelete("set null"),
+    uniqueIndex("tasks_project_id_workspace_id_id_unique").on(
+      table.projectId,
+      table.workspaceId,
+      table.id,
+    ),
     index("tasks_workspace_state_updated_at_idx").on(
       table.workspaceId,
       table.state,

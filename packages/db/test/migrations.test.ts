@@ -120,6 +120,9 @@ describe("@orqis/db migration SQL", () => {
       "FOREIGN KEY (`parent_task_id`) REFERENCES `tasks` (`id`)",
     );
     expect(tasksTableSql).toContain(
+      "FOREIGN KEY (`project_id`, `workspace_id`, `parent_task_id`) REFERENCES `tasks` (`project_id`, `workspace_id`, `id`)",
+    );
+    expect(tasksTableSql).toContain(
       "FOREIGN KEY (`checkout_run_id`) REFERENCES `runs` (`id`)",
     );
     expect(tasksTableSql).toContain(
@@ -136,6 +139,20 @@ describe("@orqis/db migration SQL", () => {
     expect(migrationSql).toContain("CREATE INDEX `tasks_parent_task_id_idx`");
     expect(migrationSql).toContain("CREATE INDEX `tasks_checkout_run_id_idx`");
     expect(migrationSql).toContain("CREATE INDEX `tasks_execution_run_id_idx`");
+    expect(migrationSql).toContain(
+      "CREATE UNIQUE INDEX `tasks_project_id_workspace_id_id_unique`",
+    );
+  });
+
+  it("scopes parent lineage references to the same project/workspace", () => {
+    const messagesTableSql = extractTableSql(migrationSql, "messages");
+
+    expect(messagesTableSql).toContain(
+      "FOREIGN KEY (`project_id`, `workspace_id`, `parent_message_id`) REFERENCES `messages` (`project_id`, `workspace_id`, `id`)",
+    );
+    expect(migrationSql).toContain(
+      "CREATE UNIQUE INDEX `messages_project_id_workspace_id_id_unique`",
+    );
   });
 
   it("persists approval lifecycle states and decision metadata", () => {
@@ -376,6 +393,54 @@ describe("@orqis/db migration SQL", () => {
       ).toThrow(
         /approvals\.run_id must reference a run in the same project\/workspace/,
       );
+    });
+  });
+
+  it("rejects parent lineage refs that point outside the row project/workspace", async () => {
+    await withDatabase((db) => {
+      db.run("INSERT INTO projects (id, slug, name) VALUES (?, ?, ?)", [
+        "p1",
+        "project-1",
+        "Project 1",
+      ]);
+      db.run("INSERT INTO projects (id, slug, name) VALUES (?, ?, ?)", [
+        "p2",
+        "project-2",
+        "Project 2",
+      ]);
+      db.run("INSERT INTO workspaces (id, project_id, name) VALUES (?, ?, ?)", [
+        "w1",
+        "p1",
+        "Workspace 1",
+      ]);
+      db.run("INSERT INTO workspaces (id, project_id, name) VALUES (?, ?, ?)", [
+        "w2",
+        "p2",
+        "Workspace 2",
+      ]);
+
+      db.run(
+        "INSERT INTO tasks (id, project_id, workspace_id, title, state) VALUES (?, ?, ?, ?, ?)",
+        ["t_parent", "p1", "w1", "Task parent", "todo"],
+      );
+      db.run(
+        "INSERT INTO messages (id, project_id, workspace_id, actor_type, content) VALUES (?, ?, ?, ?, ?)",
+        ["m_parent", "p1", "w1", "user", "message"],
+      );
+
+      expect(() =>
+        db.run(
+          "INSERT INTO tasks (id, project_id, workspace_id, parent_task_id, title, state) VALUES (?, ?, ?, ?, ?, ?)",
+          ["t_cross_parent", "p2", "w2", "t_parent", "Task cross parent", "todo"],
+        ),
+      ).toThrow(/FOREIGN KEY constraint failed/);
+
+      expect(() =>
+        db.run(
+          "INSERT INTO messages (id, project_id, workspace_id, parent_message_id, actor_type, content) VALUES (?, ?, ?, ?, ?, ?)",
+          ["m_cross_parent", "p2", "w2", "m_parent", "user", "cross message"],
+        ),
+      ).toThrow(/FOREIGN KEY constraint failed/);
     });
   });
 

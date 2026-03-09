@@ -113,6 +113,11 @@ Safe to defer while Phase 2 starts:
   - Summary (follow-up): Added executable regression coverage for orphaning update attempts on runs and tasks.
   - Changed: `packages/db/migrations/0001_project_workspace_schema.sql`, `packages/db/test/migrations.test.ts`, `TODO.md`.
 
+- [x] Enforce same-project/workspace parent lineage invariants for `parent_task_id` and `parent_message_id`
+  - Summary: Added composite self-reference constraints for `messages` and `tasks` so parent-thread lineage cannot cross project/workspace boundaries.
+  - Summary (follow-up): Kept parent-delete nulling semantics while adding regression coverage for cross-project parent-link rejection.
+  - Changed: `packages/db/src/schema.ts`, `packages/db/migrations/0001_project_workspace_schema.sql`, `packages/db/test/migrations.test.ts`, `TODO.md`.
+
 #### Hardening before Phase 3
 
 Must finish before Phase 3:

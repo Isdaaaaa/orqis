@@ -57,9 +57,11 @@ CREATE TABLE `messages` (
   FOREIGN KEY (`workspace_id`) REFERENCES `workspaces` (`id`) ON UPDATE no action ON DELETE cascade,
   FOREIGN KEY (`project_id`, `workspace_id`) REFERENCES `workspaces` (`project_id`, `id`) ON UPDATE no action ON DELETE cascade,
   FOREIGN KEY (`run_id`) REFERENCES `runs` (`id`) ON UPDATE no action ON DELETE set null,
+  FOREIGN KEY (`project_id`, `workspace_id`, `parent_message_id`) REFERENCES `messages` (`project_id`, `workspace_id`, `id`) ON UPDATE no action ON DELETE no action,
   FOREIGN KEY (`parent_message_id`) REFERENCES `messages` (`id`) ON UPDATE no action ON DELETE set null
 );
 
+CREATE UNIQUE INDEX `messages_project_id_workspace_id_id_unique` ON `messages` (`project_id`, `workspace_id`, `id`);
 CREATE INDEX `messages_workspace_created_at_idx` ON `messages` (`workspace_id`, `created_at`);
 CREATE INDEX `messages_run_created_at_idx` ON `messages` (`run_id`, `created_at`);
 
@@ -85,11 +87,13 @@ CREATE TABLE `tasks` (
   FOREIGN KEY (`workspace_id`) REFERENCES `workspaces` (`id`) ON UPDATE no action ON DELETE cascade,
   FOREIGN KEY (`project_id`, `workspace_id`) REFERENCES `workspaces` (`project_id`, `id`) ON UPDATE no action ON DELETE cascade,
   FOREIGN KEY (`run_id`) REFERENCES `runs` (`id`) ON UPDATE no action ON DELETE set null,
+  FOREIGN KEY (`project_id`, `workspace_id`, `parent_task_id`) REFERENCES `tasks` (`project_id`, `workspace_id`, `id`) ON UPDATE no action ON DELETE no action,
   FOREIGN KEY (`parent_task_id`) REFERENCES `tasks` (`id`) ON UPDATE no action ON DELETE set null,
   FOREIGN KEY (`checkout_run_id`) REFERENCES `runs` (`id`) ON UPDATE no action ON DELETE set null,
   FOREIGN KEY (`execution_run_id`) REFERENCES `runs` (`id`) ON UPDATE no action ON DELETE set null
 );
 
+CREATE UNIQUE INDEX `tasks_project_id_workspace_id_id_unique` ON `tasks` (`project_id`, `workspace_id`, `id`);
 CREATE INDEX `tasks_workspace_state_updated_at_idx` ON `tasks` (`workspace_id`, `state`, `updated_at`);
 CREATE INDEX `tasks_parent_task_id_idx` ON `tasks` (`parent_task_id`);
 CREATE INDEX `tasks_run_updated_at_idx` ON `tasks` (`run_id`, `updated_at`);
