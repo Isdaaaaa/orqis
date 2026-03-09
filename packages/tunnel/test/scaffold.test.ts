@@ -1,3 +1,7 @@
+import { type ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -7,11 +11,69 @@ import {
   TunnelStartError,
   type TunnelAdapter,
   createCloudflareTunnelAdapter,
+  createNgrokTunnelAdapter,
   startTunnelWithFallback,
 } from "../src/index.ts";
 
+class FakeChildProcess extends EventEmitter {
+  readonly stderr = new PassThrough();
+  readonly stdout = new PassThrough();
+
+  exitCode: number | null = null;
+  signalCode: NodeJS.Signals | null = null;
+  killed = false;
+  readonly killSignals: Array<NodeJS.Signals | number | undefined> = [];
+
+  asChildProcess(): ChildProcess {
+    return this as unknown as ChildProcess;
+  }
+
+  emitStdout(text: string): void {
+    this.stdout.write(text);
+  }
+
+  emitStderr(text: string): void {
+    this.stderr.write(text);
+  }
+
+  emitSpawnError(error: Error): void {
+    this.emit("error", error);
+  }
+
+  emitExit(code: number | null, signal: NodeJS.Signals | null): void {
+    this.exitCode = code;
+    this.signalCode = signal;
+    this.emit("exit", code, signal);
+  }
+
+  kill(signal?: NodeJS.Signals | number): boolean {
+    this.killed = true;
+    this.killSignals.push(signal);
+
+    if (typeof signal === "string") {
+      this.signalCode = signal;
+    }
+
+    queueMicrotask(() => {
+      this.emitExit(0, typeof signal === "string" ? signal : null);
+    });
+
+    return true;
+  }
+}
+
+function createErrnoError(
+  message: string,
+  code: string,
+): NodeJS.ErrnoException {
+  const error = new Error(message) as NodeJS.ErrnoException;
+  error.code = code;
+  return error;
+}
+
 describe("@orqis/tunnel", () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
 
@@ -19,67 +81,159 @@ describe("@orqis/tunnel", () => {
     expect(TUNNEL_PACKAGE_NAME).toBe("@orqis/tunnel");
   });
 
-  it("starts with Cloudflare first when a provider URL is configured", async () => {
-    vi.stubEnv(
-      ORQIS_CLOUDFLARE_PUBLIC_URL_ENV_VAR,
-      "https://orqis-dev.trycloudflare.com",
-    );
+  it("starts cloudflare and auto-discovers the public URL from process output", async () => {
+    const process = new FakeChildProcess();
+    const spawnProcess = vi.fn(() => process.asChildProcess());
 
-    const session = await startTunnelWithFallback({
+    const startPromise = createCloudflareTunnelAdapter({
+      discoveryPollIntervalMs: 1,
+      discoveryTimeoutMs: 200,
+      sleep: async () => undefined,
+      spawnProcess,
+    }).start({
       localUrl: "http://127.0.0.1:43110",
     });
 
+    process.emitStderr(
+      "INF Requesting new quick Tunnel on trycloudflare.com...\n",
+    );
+    process.emitStderr("INF Tunnel URL: https://orqis-dev.trycloudflare.com\n");
+
+    const session = await startPromise;
+
+    expect(spawnProcess).toHaveBeenCalledWith(
+      "cloudflared",
+      ["tunnel", "--url", "http://127.0.0.1:43110", "--no-autoupdate"],
+      expect.objectContaining({
+        stdio: ["ignore", "pipe", "pipe"],
+      }),
+    );
     expect(session.provider).toBe("cloudflare");
     expect(session.publicUrl).toBe("https://orqis-dev.trycloudflare.com/");
-    expect(session.metadata).toEqual({
-      strategy: "cloudflare-first-fallback",
-      attemptedProviders: ["cloudflare"],
+
+    await session.stop();
+    expect(process.killSignals).toEqual(["SIGTERM"]);
+  });
+
+  it("starts ngrok and auto-discovers the public URL from ngrok API", async () => {
+    const process = new FakeChildProcess();
+    const spawnProcess = vi.fn(() => process.asChildProcess());
+    const fetchImpl = vi
+      .fn<(input: string | URL | Request, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ tunnels: [] }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            tunnels: [
+              {
+                public_url: "https://orqis-mobile.ngrok-free.app",
+                proto: "https",
+                config: {
+                  addr: "http://127.0.0.1:43110",
+                },
+              },
+            ],
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json; charset=utf-8",
+            },
+          },
+        ),
+      );
+
+    const session = await createNgrokTunnelAdapter({
+      discoveryPollIntervalMs: 1,
+      discoveryTimeoutMs: 200,
+      fetchImpl,
+      ngrokApiUrl: "http://127.0.0.1:4040/api/tunnels",
+      sleep: async () => undefined,
+      spawnProcess,
+    }).start({
+      localUrl: "http://127.0.0.1:43110",
     });
 
+    expect(spawnProcess).toHaveBeenCalledWith(
+      "ngrok",
+      ["http", "http://127.0.0.1:43110", "--log", "stdout"],
+      expect.objectContaining({
+        stdio: ["ignore", "pipe", "pipe"],
+      }),
+    );
+    expect(fetchImpl).toHaveBeenCalled();
+    expect(session.provider).toBe("ngrok");
+    expect(session.publicUrl).toBe("https://orqis-mobile.ngrok-free.app/");
+
+    await session.stop();
+    expect(process.killSignals).toEqual(["SIGTERM"]);
+  });
+
+  it("accepts optional cloudflare public URL override without spawning process", async () => {
+    vi.stubEnv(
+      ORQIS_CLOUDFLARE_PUBLIC_URL_ENV_VAR,
+      "https://orqis-env.trycloudflare.com",
+    );
+    const spawnProcess = vi.fn();
+
+    const session = await createCloudflareTunnelAdapter({
+      spawnProcess,
+    }).start({
+      localUrl: "http://127.0.0.1:43110",
+    });
+
+    expect(session.publicUrl).toBe("https://orqis-env.trycloudflare.com/");
+    expect(spawnProcess).not.toHaveBeenCalled();
     await expect(session.stop()).resolves.toBeUndefined();
   });
 
-  it("fails when no provider can provide a discovered public URL", async () => {
-    await expect(
-      startTunnelWithFallback({
-        localUrl: "http://127.0.0.1:43110",
-      }),
-    ).rejects.toMatchObject({
-      name: "TunnelStartError",
-      attemptedProviders: ["cloudflare", "ngrok"],
-      failures: [
-        {
-          provider: "cloudflare",
-          message: expect.stringMatching(
-            /requires ORQIS_CLOUDFLARE_PUBLIC_URL to be set/,
-          ),
-        },
-        {
-          provider: "ngrok",
-          message: expect.stringMatching(
-            /requires ORQIS_NGROK_PUBLIC_URL to be set/,
-          ),
-        },
-      ],
-    });
-  });
-
-  it("falls back to ngrok when Cloudflare has no configured URL", async () => {
+  it("accepts optional ngrok public URL override without spawning process", async () => {
     vi.stubEnv(
       ORQIS_NGROK_PUBLIC_URL_ENV_VAR,
-      "https://orqis-mobile.ngrok-free.app",
+      "https://orqis-env.ngrok-free.app",
     );
+    const spawnProcess = vi.fn();
 
-    const session = await startTunnelWithFallback({
+    const session = await createNgrokTunnelAdapter({
+      spawnProcess,
+    }).start({
       localUrl: "http://127.0.0.1:43110",
     });
 
-    expect(session.provider).toBe("ngrok");
-    expect(session.publicUrl).toBe("https://orqis-mobile.ngrok-free.app/");
-    expect(session.metadata).toEqual({
-      strategy: "cloudflare-first-fallback",
-      attemptedProviders: ["cloudflare", "ngrok"],
+    expect(session.publicUrl).toBe("https://orqis-env.ngrok-free.app/");
+    expect(spawnProcess).not.toHaveBeenCalled();
+    await expect(session.stop()).resolves.toBeUndefined();
+  });
+
+  it("surfaces a clear install error when cloudflared is missing", async () => {
+    const process = new FakeChildProcess();
+    const spawnProcess = vi.fn(() => {
+      queueMicrotask(() => {
+        process.emitSpawnError(
+          createErrnoError("spawn cloudflared ENOENT", "ENOENT"),
+        );
+      });
+
+      return process.asChildProcess();
     });
+
+    await expect(
+      createCloudflareTunnelAdapter({
+        discoveryPollIntervalMs: 1,
+        discoveryTimeoutMs: 200,
+        sleep: async () => undefined,
+        spawnProcess,
+      }).start({
+        localUrl: "http://127.0.0.1:43110",
+      }),
+    ).rejects.toThrowError(/Install cloudflared and ensure it is on PATH/);
   });
 
   it("falls back to ngrok when the Cloudflare adapter fails", async () => {

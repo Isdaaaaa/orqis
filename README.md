@@ -77,7 +77,8 @@ Current Phase 1 runtime behavior:
 - `node apps/cli/dist/cli.js init` launches the local web runtime as a dedicated child process and keeps serving until interrupted.
 - `orqis init` prints `local_url`, `health_url`, `public_url`, and tunnel provider metadata after the CLI confirms runtime and tunnel readiness.
 - Tunnel startup uses an ordered provider strategy (`cloudflare` first, `ngrok` fallback) based on `config.tunnel.providers`.
-- The scaffold tunnel adapters require provider URL discovery input (`ORQIS_CLOUDFLARE_PUBLIC_URL` / `ORQIS_NGROK_PUBLIC_URL`) and fail fast when unavailable instead of returning synthesized placeholder domains.
+- Tunnel adapters now manage `cloudflared`/`ngrok` child-process lifecycle directly and auto-discover public URLs; manual `ORQIS_*_PUBLIC_URL` values are optional overrides instead of required inputs.
+- `orqis init` requires tunnel binaries on `PATH` (`cloudflared` and/or `ngrok`), and supports `ORQIS_CLOUDFLARED_BIN` / `ORQIS_NGROK_BIN` when custom binary paths are needed.
 - Use `--health-timeout-ms <ms>` if startup readiness needs a different timeout window.
 
 ## First implementation target

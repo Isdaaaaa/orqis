@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Split the scaffold web runtime into a dedicated process to unblock managed tunnel lifecycle and automatic public URL discovery.
+Close remaining Phase 1 hardening tasks while preparing Phase 2 project/workspace persistence work.
 
 ## Completed
 
@@ -50,7 +50,9 @@ Must finish before Phase 2:
 - [x] Split the scaffold web runtime into a dedicated process before tunnel-provider lifecycle management lands
   - Summary: Updated `orqis init` to launch the web scaffold in a managed child process with readiness messaging, graceful stop handling, and source-mode fallback when runtime process artifacts are not built.
   - Changed: `apps/cli/src/cli.ts`, `apps/cli/test/init.test.ts`, `apps/cli/test/fixtures/web-runtime-ready.mjs`, `apps/cli/test/fixtures/web-runtime-start-error.mjs`, `apps/web/src/runtime-process.ts`, `apps/web/test/runtime-process.test.ts`.
-- [ ] Implement managed `cloudflared`/`ngrok` process lifecycle and automatic URL discovery (remove manual `ORQIS_*_PUBLIC_URL` requirement)
+- [x] Implement managed `cloudflared`/`ngrok` process lifecycle and automatic URL discovery (remove manual `ORQIS_*_PUBLIC_URL` requirement)
+  - Summary: Replaced static env-only tunnel adapters with managed `cloudflared`/`ngrok` process launch/stop flows, automatic public URL discovery, clear missing-binary diagnostics, and deterministic fallback coverage.
+  - Changed: `packages/tunnel/src/index.ts`, `packages/tunnel/test/scaffold.test.ts`, `apps/cli/test/init.test.ts`, `README.md`, `TODO.md`.
 
 Safe to defer while Phase 2 starts:
 - [ ] Tighten `orqis init --health-timeout-ms` validation to reject non-numeric suffix input (for example `10abc`)
@@ -58,6 +60,8 @@ Safe to defer while Phase 2 starts:
 - [ ] Add signal-shutdown test coverage for `waitForRuntimeShutdown` (listener cleanup and runtime stop invocation)
 - [ ] Harden the `orqis init` smoke test against reserved-port race conditions (avoid probe-release-then-bind assumptions)
 - [ ] Add an integration test that runs the real `apps/web/src/runtime-process.ts` entrypoint and asserts IPC ready/start-error messages plus graceful shutdown on parent disconnect
+- [ ] Tighten ngrok public URL discovery to fail when API tunnels do not target the requested local runtime address (avoid falling back to unrelated tunnels)
+- [ ] Add tunnel stop lifecycle regression coverage for the race where a child process exits between `hasExited` checks and stop-listener attachment
 
 ## Phase 2: Projects and persistent workspaces
 

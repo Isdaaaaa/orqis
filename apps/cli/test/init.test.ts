@@ -815,7 +815,7 @@ describe("orqis init runtime bootstrap", () => {
     );
   });
 
-  it("stops the runtime when default tunnel adapters cannot discover public URLs", async () => {
+  it("stops the runtime when default tunnel adapters are disabled", async () => {
     const configDir = await makeTempDir("orqis-init-tunnel-default-failure-");
     const error = vi.spyOn(console, "error").mockImplementation(() => {
       return;
@@ -823,6 +823,9 @@ describe("orqis init runtime bootstrap", () => {
     const stop = vi.fn(async () => {
       return;
     });
+
+    vi.stubEnv("ORQIS_DISABLE_CLOUDFLARE_TUNNEL", "1");
+    vi.stubEnv("ORQIS_DISABLE_NGROK_TUNNEL", "1");
 
     const exitCode = await runCli(
       ["node", "orqis", "init", "--config-dir", configDir],
@@ -852,7 +855,9 @@ describe("orqis init runtime bootstrap", () => {
     expect(exitCode).toBe(1);
     expect(stop).toHaveBeenCalledTimes(1);
     expect(error).toHaveBeenCalledWith(
-      expect.stringMatching(/requires ORQIS_CLOUDFLARE_PUBLIC_URL to be set/),
+      expect.stringMatching(
+        /disabled by ORQIS_DISABLE_CLOUDFLARE_TUNNEL=1/,
+      ),
     );
   });
 
