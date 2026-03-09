@@ -111,6 +111,32 @@ async function createTestRuntime(
   };
 }
 
+async function reserveAvailablePort(): Promise<number> {
+  const probe = createServer();
+  activeServers.add(probe);
+
+  await new Promise<void>((resolve, reject) => {
+    probe.listen(0, "127.0.0.1", (error?: Error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
+
+  const address = probe.address();
+
+  if (!address || typeof address === "string") {
+    await closeServer(probe);
+    throw new Error("Port probe did not expose a TCP address.");
+  }
+
+  await closeServer(probe);
+  return address.port;
+}
+
 afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
@@ -815,6 +841,101 @@ describe("orqis init runtime bootstrap", () => {
     );
     expect(log).toHaveBeenCalledWith("web_runtime=ready");
     expect(tunnelStop).toHaveBeenCalledTimes(1);
+  });
+
+  it("smoke-tests bootstrap config generation, runtime boot, and URL output contract", async () => {
+    const configDir = await makeTempDir("orqis-init-smoke-");
+    const configPath = join(configDir, ORQIS_CONFIG_FILE_NAME);
+    const runtimePort = await reserveAvailablePort();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {
+      return;
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {
+      return;
+    });
+
+    vi.stubEnv(
+      "ORQIS_CLOUDFLARE_PUBLIC_URL",
+      "https://orqis-smoke.trycloudflare.com",
+    );
+    vi.stubEnv("ORQIS_DISABLE_NGROK_TUNNEL", "1");
+
+    const exitCode = await runCli(
+      ["node", "orqis", "init", "--config-dir", configDir],
+      {
+        bootstrapConfig: async (options) => {
+          const result = await bootstrapOrqisConfig(options);
+          const nextConfig = {
+            ...result.config,
+            runtime: {
+              host: "127.0.0.1",
+              port: runtimePort,
+            },
+          };
+
+          await writeFile(
+            result.configFilePath,
+            `${JSON.stringify(nextConfig, null, 2)}\n`,
+          );
+
+          return {
+            ...result,
+            config: nextConfig,
+          };
+        },
+        waitForShutdown: async (runtime) => {
+          await runtime.stop();
+        },
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(error).not.toHaveBeenCalled();
+
+    const saved = JSON.parse(await readFile(configPath, "utf8")) as {
+      runtime?: { host?: string; port?: number };
+      schemaVersion?: number;
+      tunnel?: { providers?: string[] };
+    };
+
+    expect(saved.schemaVersion).toBe(DEFAULT_ORQIS_CONFIG.schemaVersion);
+    expect(saved.runtime).toEqual({
+      host: "127.0.0.1",
+      port: runtimePort,
+    });
+    expect(saved.tunnel).toEqual(DEFAULT_ORQIS_CONFIG.tunnel);
+
+    expect(log).toHaveBeenCalledWith("orqis init: created");
+    expect(log).toHaveBeenCalledWith(`config_dir=${configDir}`);
+    expect(log).toHaveBeenCalledWith(`config_file=${configPath}`);
+
+    const localUrlCall = log.mock.calls.find(([value]) => {
+      return (
+        typeof value === "string" && value.startsWith("local_url=http://127.0.0.1:")
+      );
+    });
+    const healthUrlCall = log.mock.calls.find(([value]) => {
+      return (
+        typeof value === "string" &&
+        value.startsWith("health_url=http://127.0.0.1:")
+      );
+    });
+    const localUrl = localUrlCall?.[0].replace("local_url=", "");
+    const healthUrl = healthUrlCall?.[0].replace("health_url=", "");
+
+    expect(localUrl).toBe(`http://127.0.0.1:${runtimePort}`);
+    expect(healthUrl).toBe(`${localUrl}/health`);
+    expect(log).toHaveBeenCalledWith(
+      "public_url=https://orqis-smoke.trycloudflare.com/",
+    );
+    expect(log).toHaveBeenCalledWith("tunnel_provider=cloudflare");
+    expect(log).toHaveBeenCalledWith(
+      "tunnel_strategy=cloudflare-first-fallback",
+    );
+    expect(log).toHaveBeenCalledWith(
+      "tunnel_attempted_providers=cloudflare",
+    );
+    expect(log).toHaveBeenCalledWith("web_runtime=ready");
   });
 
   it("returns non-zero for invalid CLI arguments without throwing", async () => {
