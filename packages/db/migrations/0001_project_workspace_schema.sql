@@ -22,6 +22,7 @@ CREATE TABLE `workspaces` (
 );
 
 CREATE UNIQUE INDEX `workspaces_project_id_unique` ON `workspaces` (`project_id`);
+CREATE UNIQUE INDEX `workspaces_project_id_id_unique` ON `workspaces` (`project_id`, `id`);
 CREATE INDEX `workspaces_created_at_idx` ON `workspaces` (`created_at`);
 
 CREATE TABLE `runs` (
@@ -35,7 +36,8 @@ CREATE TABLE `runs` (
   `created_at` text NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` text NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON UPDATE no action ON DELETE cascade,
-  FOREIGN KEY (`workspace_id`) REFERENCES `workspaces` (`id`) ON UPDATE no action ON DELETE cascade
+  FOREIGN KEY (`workspace_id`) REFERENCES `workspaces` (`id`) ON UPDATE no action ON DELETE cascade,
+  FOREIGN KEY (`project_id`, `workspace_id`) REFERENCES `workspaces` (`project_id`, `id`) ON UPDATE no action ON DELETE cascade
 );
 
 CREATE INDEX `runs_workspace_created_at_idx` ON `runs` (`workspace_id`, `created_at`);
@@ -53,6 +55,7 @@ CREATE TABLE `messages` (
   `created_at` text NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON UPDATE no action ON DELETE cascade,
   FOREIGN KEY (`workspace_id`) REFERENCES `workspaces` (`id`) ON UPDATE no action ON DELETE cascade,
+  FOREIGN KEY (`project_id`, `workspace_id`) REFERENCES `workspaces` (`project_id`, `id`) ON UPDATE no action ON DELETE cascade,
   FOREIGN KEY (`run_id`) REFERENCES `runs` (`id`) ON UPDATE no action ON DELETE set null,
   FOREIGN KEY (`parent_message_id`) REFERENCES `messages` (`id`) ON UPDATE no action ON DELETE set null
 );
@@ -80,6 +83,7 @@ CREATE TABLE `tasks` (
   `completed_at` text,
   FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON UPDATE no action ON DELETE cascade,
   FOREIGN KEY (`workspace_id`) REFERENCES `workspaces` (`id`) ON UPDATE no action ON DELETE cascade,
+  FOREIGN KEY (`project_id`, `workspace_id`) REFERENCES `workspaces` (`project_id`, `id`) ON UPDATE no action ON DELETE cascade,
   FOREIGN KEY (`run_id`) REFERENCES `runs` (`id`) ON UPDATE no action ON DELETE set null,
   FOREIGN KEY (`parent_task_id`) REFERENCES `tasks` (`id`) ON UPDATE no action ON DELETE set null,
   FOREIGN KEY (`checkout_run_id`) REFERENCES `runs` (`id`) ON UPDATE no action ON DELETE set null,
@@ -112,6 +116,7 @@ CREATE TABLE `approvals` (
   `updated_at` text NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON UPDATE no action ON DELETE cascade,
   FOREIGN KEY (`workspace_id`) REFERENCES `workspaces` (`id`) ON UPDATE no action ON DELETE cascade,
+  FOREIGN KEY (`project_id`, `workspace_id`) REFERENCES `workspaces` (`project_id`, `id`) ON UPDATE no action ON DELETE cascade,
   FOREIGN KEY (`task_id`) REFERENCES `tasks` (`id`) ON UPDATE no action ON DELETE cascade,
   FOREIGN KEY (`run_id`) REFERENCES `runs` (`id`) ON UPDATE no action ON DELETE set null
 );
@@ -134,11 +139,7 @@ CREATE TABLE `audit_events` (
   `action` text NOT NULL,
   `details_json` text,
   `created_at` text NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON UPDATE no action ON DELETE cascade,
-  FOREIGN KEY (`workspace_id`) REFERENCES `workspaces` (`id`) ON UPDATE no action ON DELETE cascade,
-  FOREIGN KEY (`run_id`) REFERENCES `runs` (`id`) ON UPDATE no action ON DELETE set null,
-  FOREIGN KEY (`task_id`) REFERENCES `tasks` (`id`) ON UPDATE no action ON DELETE set null,
-  FOREIGN KEY (`approval_id`) REFERENCES `approvals` (`id`) ON UPDATE no action ON DELETE set null
+  FOREIGN KEY (`project_id`, `workspace_id`) REFERENCES `workspaces` (`project_id`, `id`) ON UPDATE no action ON DELETE no action
 );
 
 CREATE INDEX `audit_events_workspace_created_at_idx` ON `audit_events` (`workspace_id`, `created_at`);

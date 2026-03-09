@@ -71,6 +71,7 @@ export const workspaces = sqliteTable(
   },
   (table) => [
     uniqueIndex("workspaces_project_id_unique").on(table.projectId),
+    uniqueIndex("workspaces_project_id_id_unique").on(table.projectId, table.id),
     index("workspaces_created_at_idx").on(table.createdAt),
   ],
 );
@@ -97,6 +98,11 @@ export const runs = sqliteTable(
       "runs_status_check",
       sql`${table.status} in ('planned', 'running', 'waiting_approval', 'done', 'failed')`,
     ),
+    foreignKey({
+      columns: [table.projectId, table.workspaceId],
+      foreignColumns: [workspaces.projectId, workspaces.id],
+      name: "runs_project_id_workspace_id_workspaces_project_id_id_fk",
+    }).onDelete("cascade"),
     index("runs_workspace_created_at_idx").on(table.workspaceId, table.createdAt),
     index("runs_status_created_at_idx").on(table.status, table.createdAt),
   ],
@@ -124,6 +130,11 @@ export const messages = sqliteTable(
       "messages_actor_type_check",
       sql`${table.actorType} in ('user', 'agent', 'system')`,
     ),
+    foreignKey({
+      columns: [table.projectId, table.workspaceId],
+      foreignColumns: [workspaces.projectId, workspaces.id],
+      name: "messages_project_id_workspace_id_workspaces_project_id_id_fk",
+    }).onDelete("cascade"),
     foreignKey({
       columns: [table.parentMessageId],
       foreignColumns: [table.id],
@@ -172,6 +183,11 @@ export const tasks = sqliteTable(
       "tasks_lock_owner_type_check",
       sql`${table.lockOwnerType} is null or ${table.lockOwnerType} in ('run', 'agent', 'user')`,
     ),
+    foreignKey({
+      columns: [table.projectId, table.workspaceId],
+      foreignColumns: [workspaces.projectId, workspaces.id],
+      name: "tasks_project_id_workspace_id_workspaces_project_id_id_fk",
+    }).onDelete("cascade"),
     foreignKey({
       columns: [table.parentTaskId],
       foreignColumns: [table.id],
@@ -229,6 +245,11 @@ export const approvals = sqliteTable(
       "approvals_decision_by_actor_type_check",
       sql`${table.decisionByActorType} is null or ${table.decisionByActorType} in ('user', 'agent', 'system')`,
     ),
+    foreignKey({
+      columns: [table.projectId, table.workspaceId],
+      foreignColumns: [workspaces.projectId, workspaces.id],
+      name: "approvals_project_id_workspace_id_workspaces_project_id_id_fk",
+    }).onDelete("cascade"),
     index("approvals_task_created_at_idx").on(table.taskId, table.createdAt),
     index("approvals_status_created_at_idx").on(table.status, table.createdAt),
     index("approvals_run_created_at_idx").on(table.runId, table.createdAt),
@@ -239,17 +260,11 @@ export const auditEvents = sqliteTable(
   "audit_events",
   {
     id: text("id").primaryKey(),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
-    workspaceId: text("workspace_id")
-      .notNull()
-      .references(() => workspaces.id, { onDelete: "cascade" }),
-    runId: text("run_id").references(() => runs.id, { onDelete: "set null" }),
-    taskId: text("task_id").references(() => tasks.id, { onDelete: "set null" }),
-    approvalId: text("approval_id").references(() => approvals.id, {
-      onDelete: "set null",
-    }),
+    projectId: text("project_id").notNull(),
+    workspaceId: text("workspace_id").notNull(),
+    runId: text("run_id"),
+    taskId: text("task_id"),
+    approvalId: text("approval_id"),
     actorType: text("actor_type").notNull(),
     actorId: text("actor_id"),
     entityType: text("entity_type").notNull(),
@@ -263,6 +278,11 @@ export const auditEvents = sqliteTable(
       "audit_events_actor_type_check",
       sql`${table.actorType} in ('user', 'agent', 'system')`,
     ),
+    foreignKey({
+      columns: [table.projectId, table.workspaceId],
+      foreignColumns: [workspaces.projectId, workspaces.id],
+      name: "audit_events_project_id_workspace_id_workspaces_project_id_id_fk",
+    }),
     index("audit_events_workspace_created_at_idx").on(
       table.workspaceId,
       table.createdAt,

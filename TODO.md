@@ -95,6 +95,14 @@ Safe to defer while Phase 2 starts:
 - [ ] Add specialist-agent adapter registry contract in core/runtime boundaries
   - Acceptance criteria: adapter type registry supports execution + environment validation hooks and rejects unknown adapter types for task execution.
 
+#### Additional fixes discovered during Phase 2
+
+- [x] Fix migration-level workflow integrity gaps from schema review
+  - Summary: Enforced `project_id`/`workspace_id` pair integrity in `runs`, `messages`, `tasks`, `approvals`, and `audit_events` via composite foreign keys.
+  - Summary (follow-up): Removed mutable-entity foreign keys from `audit_events` (`run_id`, `task_id`, `approval_id`) so append-only triggers no longer conflict with parent-row cleanup.
+  - Summary (follow-up): Added executable in-memory migration behavior tests for cross-project mismatch rejection and append-only audit-event enforcement during parent cleanup.
+  - Changed: `packages/db/src/schema.ts`, `packages/db/migrations/0001_project_workspace_schema.sql`, `packages/db/test/migrations.test.ts`, `packages/db/package.json`, `pnpm-lock.yaml`, `TODO.md`.
+
 #### Hardening before Phase 3
 
 Must finish before Phase 3:
