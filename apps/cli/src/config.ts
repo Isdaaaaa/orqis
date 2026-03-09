@@ -352,6 +352,18 @@ function parseConfigContent(
   return parsed;
 }
 
+function hasErrnoCode(
+  error: unknown,
+  code: string,
+): error is NodeJS.ErrnoException {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === code
+  );
+}
+
 async function normalizeConfigPermissions(
   configDir: string,
   configFilePath: string,
@@ -365,7 +377,7 @@ async function normalizeConfigPermissions(
   try {
     await chmod(configFilePath, ORQIS_CONFIG_FILE_MODE);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+    if (!hasErrnoCode(error, "ENOENT")) {
       throw error;
     }
   }
@@ -394,8 +406,22 @@ export async function bootstrapOrqisConfig(
   let status: BootstrapStatus = "unchanged";
   let config = cloneValue(defaultConfig);
 
+  let rawConfig: string | undefined;
   try {
-    const rawConfig = await readFile(configFilePath, "utf8");
+    rawConfig = await readFile(configFilePath, "utf8");
+  } catch (error) {
+    if (hasErrnoCode(error, "ENOENT")) {
+      await writeFile(configFilePath, toConfigContent(config), {
+        encoding: "utf8",
+        ...(ENFORCE_POSIX_PERMISSIONS ? { mode: ORQIS_CONFIG_FILE_MODE } : {}),
+      });
+      status = "created";
+    } else {
+      throw error;
+    }
+  }
+
+  if (rawConfig !== undefined) {
     config = parseConfigContent(rawConfig, configFilePath);
     const existingSchemaVersion = resolveExistingSchemaVersion(
       config,
@@ -410,10 +436,7 @@ export async function bootstrapOrqisConfig(
       migrations,
     );
     validateExistingConfigShape(config, configFilePath);
-    const updated = mergeMissingDefaults(
-      config,
-      cloneValue(defaultConfig),
-    );
+    const updated = mergeMissingDefaults(config, cloneValue(defaultConfig));
 
     if (migrated || updated) {
       await writeFile(configFilePath, toConfigContent(config), {
@@ -421,16 +444,6 @@ export async function bootstrapOrqisConfig(
         ...(ENFORCE_POSIX_PERMISSIONS ? { mode: ORQIS_CONFIG_FILE_MODE } : {}),
       });
       status = "updated";
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      await writeFile(configFilePath, toConfigContent(config), {
-        encoding: "utf8",
-        ...(ENFORCE_POSIX_PERMISSIONS ? { mode: ORQIS_CONFIG_FILE_MODE } : {}),
-      });
-      status = "created";
-    } else {
-      throw error;
     }
   }
 

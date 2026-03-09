@@ -1,10 +1,11 @@
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { runCli } from "../src/cli.ts";
+import { isCliEntrypoint, runCli } from "../src/cli.ts";
 import {
   DEFAULT_ORQIS_CONFIG,
   ORQIS_CONFIG_DIR_ENV_VAR,
@@ -223,6 +224,38 @@ describe("orqis init config bootstrap", () => {
     });
   });
 
+  it("does not treat migration ENOENT errors as missing config files", async () => {
+    const configDir = await makeTempDir("orqis-init-migration-enoent-");
+    const configPath = join(configDir, ORQIS_CONFIG_FILE_NAME);
+
+    await writeFile(`${configPath}`, '{"schemaVersion":1,"custom":{"keep":true}}\n');
+
+    const migrationError = new Error(
+      "missing migration fixture",
+    ) as NodeJS.ErrnoException;
+    migrationError.code = "ENOENT";
+
+    await expect(
+      bootstrapOrqisConfig({
+        configDir,
+        targetSchemaVersion: 2,
+        migrations: {
+          1: () => {
+            throw migrationError;
+          },
+        },
+      }),
+    ).rejects.toBe(migrationError);
+
+    const saved = JSON.parse(await readFile(configPath, "utf8")) as {
+      custom?: { keep?: boolean };
+      schemaVersion?: number;
+    };
+
+    expect(saved.custom?.keep).toBe(true);
+    expect(saved.schemaVersion).toBe(1);
+  });
+
   it("creates config artifacts with restrictive permissions", async () => {
     const rootDir = await makeTempDir("orqis-init-permissions-create-root-");
     const configDir = join(rootDir, "orqis-config");
@@ -325,5 +358,22 @@ describe("orqis init config bootstrap", () => {
     expect(error).toHaveBeenCalledWith(
       expect.stringMatching(/"runtime" must be an object when provided/),
     );
+  });
+
+  it("detects symlinked entrypoint paths as the CLI entry module", () => {
+    const modulePath = "/repo/apps/cli/dist/cli.js";
+    const argvEntry = "/tmp/orqis";
+
+    const resolvePath = (filePath: string): string => {
+      if (filePath === argvEntry) {
+        return modulePath;
+      }
+
+      return filePath;
+    };
+
+    expect(
+      isCliEntrypoint(pathToFileURL(modulePath).href, argvEntry, resolvePath),
+    ).toBe(true);
   });
 });

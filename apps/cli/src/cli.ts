@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 import { Command, CommanderError } from "commander";
-import { pathToFileURL } from "node:url";
+import { realpathSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { bootstrapOrqisConfig } from "./config.js";
 
@@ -44,9 +45,27 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
   return 0;
 }
 
-const isEntrypoint =
-  process.argv[1] !== undefined &&
-  import.meta.url === pathToFileURL(process.argv[1]).href;
+type ResolveFilePath = (filePath: string) => string;
+
+export function isCliEntrypoint(
+  moduleUrl: string,
+  argvEntry: string | undefined,
+  resolveFilePath: ResolveFilePath = realpathSync,
+): boolean {
+  if (argvEntry === undefined) {
+    return false;
+  }
+
+  try {
+    return (
+      resolveFilePath(fileURLToPath(moduleUrl)) === resolveFilePath(argvEntry)
+    );
+  } catch {
+    return moduleUrl === pathToFileURL(argvEntry).href;
+  }
+}
+
+const isEntrypoint = isCliEntrypoint(import.meta.url, process.argv[1]);
 
 if (isEntrypoint) {
   runCli().then((exitCode) => {

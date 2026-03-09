@@ -24,6 +24,7 @@ Implement the `orqis init` vertical slice: local runtime boot + tunnel URL hando
   - Summary (follow-up): Added module-load validation and test coverage for the default migration chain to catch schema bumps without migrations immediately.
   - Summary (follow-up): Scoped parse-error handling to JSON parsing only and enforced restrictive config artifact permissions with regression coverage.
   - Summary (follow-up): Made config-permission hardening and permission tests cross-platform by applying POSIX mode enforcement only on POSIX environments.
+  - Summary (follow-up): Fixed symlinked CLI entrypoint detection and narrowed `ENOENT` handling to initial config reads so migration errors cannot be misclassified as missing config files.
   - Changed: `apps/cli/src/cli.ts`, `apps/cli/src/config.ts`, `apps/cli/src/index.ts`, `apps/cli/test/init.test.ts`, `apps/cli/package.json`, `pnpm-lock.yaml`.
 
 - [ ] Add web runtime launcher and health checks from CLI
