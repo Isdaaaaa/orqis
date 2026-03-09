@@ -99,8 +99,8 @@ Must finish before Phase 3:
 - [ ] Add regression tests proving guarded task/run transitions are blocked until required approvals are resolved
 - [ ] Add regression tests proving all task/approval/run mutations emit audit events with actor and run correlation metadata
 
-Unclassified:
-- [ ] Add query helpers for issue/task-centric run history so timeline and run drill-down share one contract
+Move to later phase:
+- [ ] Add query helpers for issue/task-centric run history so timeline and run drill-down share one contract (Phase 4 timeline/read-model hardening)
 
 ## Phase 3: Project Manager planning and task approvals
 
