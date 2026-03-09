@@ -39,8 +39,10 @@ Implement the `orqis init` vertical slice: local runtime boot + tunnel URL hando
   - Summary (follow-up): Removed synthesized tunnel-domain success paths so tunnel startup now fails fast unless a provider URL is explicitly discovered/supplied.
   - Changed: `packages/tunnel/src/index.ts`, `packages/tunnel/test/scaffold.test.ts`, `apps/cli/src/cli.ts`, `apps/cli/test/init.test.ts`, `README.md`, `TODO.md`.
 
-- [ ] Add bootstrap smoke test for `orqis init`
+- [x] Add bootstrap smoke test for `orqis init`
   - Acceptance criteria: automated test verifies config generation, runtime boot, and URL output contract.
+  - Summary: Added an end-to-end `orqis init` smoke test that validates config bootstrap, runtime startup, and CLI URL/status output contract lines in one flow.
+  - Changed: `apps/cli/test/init.test.ts`, `TODO.md`.
 
 #### Hardening before Phase 2
 
