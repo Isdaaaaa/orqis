@@ -115,6 +115,15 @@ function assertCompleteMigrationChain(
   }
 }
 
+export function assertDefaultMigrationChain(): void {
+  assertCompleteMigrationChain(
+    ORQIS_CONFIG_SCHEMA_VERSION,
+    ORQIS_CONFIG_MIGRATIONS,
+  );
+}
+
+assertDefaultMigrationChain();
+
 function throwConfigShapeError(
   configFilePath: string,
   keyPath: string,

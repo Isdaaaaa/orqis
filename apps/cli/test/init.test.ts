@@ -10,6 +10,7 @@ import {
   ORQIS_CONFIG_DIR_ENV_VAR,
   ORQIS_CONFIG_FILE_NAME,
   ORQIS_CONFIG_SCHEMA_VERSION,
+  assertDefaultMigrationChain,
   bootstrapOrqisConfig,
   resolveOrqisConfigDir,
 } from "../src/config.ts";
@@ -32,6 +33,10 @@ afterEach(async () => {
 });
 
 describe("orqis init config bootstrap", () => {
+  it("declares a complete default migration chain", () => {
+    expect(() => assertDefaultMigrationChain()).not.toThrow();
+  });
+
   it("creates default config on first run", async () => {
     const configDir = await makeTempDir("orqis-init-create-");
 
