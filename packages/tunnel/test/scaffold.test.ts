@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  ORQIS_CLOUDFLARE_PUBLIC_URL_ENV_VAR,
+  ORQIS_NGROK_PUBLIC_URL_ENV_VAR,
   TUNNEL_PACKAGE_NAME,
   TunnelStartError,
   type TunnelAdapter,
@@ -17,21 +19,67 @@ describe("@orqis/tunnel", () => {
     expect(TUNNEL_PACKAGE_NAME).toBe("@orqis/tunnel");
   });
 
-  it("starts with Cloudflare first by default", async () => {
+  it("starts with Cloudflare first when a provider URL is configured", async () => {
+    vi.stubEnv(
+      ORQIS_CLOUDFLARE_PUBLIC_URL_ENV_VAR,
+      "https://orqis-dev.trycloudflare.com",
+    );
+
     const session = await startTunnelWithFallback({
       localUrl: "http://127.0.0.1:43110",
     });
 
     expect(session.provider).toBe("cloudflare");
-    expect(session.publicUrl).toBe(
-      "https://orqis-127-0-0-1-43110.trycloudflare.com",
-    );
+    expect(session.publicUrl).toBe("https://orqis-dev.trycloudflare.com/");
     expect(session.metadata).toEqual({
       strategy: "cloudflare-first-fallback",
       attemptedProviders: ["cloudflare"],
     });
 
     await expect(session.stop()).resolves.toBeUndefined();
+  });
+
+  it("fails when no provider can provide a discovered public URL", async () => {
+    await expect(
+      startTunnelWithFallback({
+        localUrl: "http://127.0.0.1:43110",
+      }),
+    ).rejects.toMatchObject({
+      name: "TunnelStartError",
+      attemptedProviders: ["cloudflare", "ngrok"],
+      failures: [
+        {
+          provider: "cloudflare",
+          message: expect.stringMatching(
+            /requires ORQIS_CLOUDFLARE_PUBLIC_URL to be set/,
+          ),
+        },
+        {
+          provider: "ngrok",
+          message: expect.stringMatching(
+            /requires ORQIS_NGROK_PUBLIC_URL to be set/,
+          ),
+        },
+      ],
+    });
+  });
+
+  it("falls back to ngrok when Cloudflare has no configured URL", async () => {
+    vi.stubEnv(
+      ORQIS_NGROK_PUBLIC_URL_ENV_VAR,
+      "https://orqis-mobile.ngrok-free.app",
+    );
+
+    const session = await startTunnelWithFallback({
+      localUrl: "http://127.0.0.1:43110",
+    });
+
+    expect(session.provider).toBe("ngrok");
+    expect(session.publicUrl).toBe("https://orqis-mobile.ngrok-free.app/");
+    expect(session.metadata).toEqual({
+      strategy: "cloudflare-first-fallback",
+      attemptedProviders: ["cloudflare", "ngrok"],
+    });
   });
 
   it("falls back to ngrok when the Cloudflare adapter fails", async () => {

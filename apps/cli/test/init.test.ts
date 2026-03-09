@@ -718,6 +718,47 @@ describe("orqis init runtime bootstrap", () => {
     );
   });
 
+  it("stops the runtime when default tunnel adapters cannot discover public URLs", async () => {
+    const configDir = await makeTempDir("orqis-init-tunnel-default-failure-");
+    const error = vi.spyOn(console, "error").mockImplementation(() => {
+      return;
+    });
+    const stop = vi.fn(async () => {
+      return;
+    });
+
+    const exitCode = await runCli(
+      ["node", "orqis", "init", "--config-dir", configDir],
+      {
+        fetchImpl: async () =>
+          new Response(
+            JSON.stringify({
+              service: "@orqis/web",
+              status: "ok",
+              uptimeMs: 1,
+            }),
+            {
+              status: 200,
+              headers: {
+                "content-type": "application/json; charset=utf-8",
+              },
+            },
+          ),
+        startWebRuntime: async () => ({
+          baseUrl: "http://127.0.0.1:43110",
+          healthUrl: "http://127.0.0.1:43110/health",
+          stop,
+        }),
+      },
+    );
+
+    expect(exitCode).toBe(1);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringMatching(/requires ORQIS_CLOUDFLARE_PUBLIC_URL to be set/),
+    );
+  });
+
   it("executes via `orqis init` command arguments and reports runtime readiness", async () => {
     const configDir = await makeTempDir("orqis-init-cli-");
     const log = vi.spyOn(console, "log").mockImplementation(() => {

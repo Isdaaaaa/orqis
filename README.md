@@ -77,6 +77,7 @@ Current Phase 1 runtime behavior:
 - `node apps/cli/dist/cli.js init` starts the local web runtime and keeps serving until interrupted.
 - `orqis init` prints `local_url`, `health_url`, `public_url`, and tunnel provider metadata after the CLI confirms runtime and tunnel readiness.
 - Tunnel startup uses an ordered provider strategy (`cloudflare` first, `ngrok` fallback) based on `config.tunnel.providers`.
+- The scaffold tunnel adapters require provider URL discovery input (`ORQIS_CLOUDFLARE_PUBLIC_URL` / `ORQIS_NGROK_PUBLIC_URL`) and fail fast when unavailable instead of returning synthesized placeholder domains.
 - Use `--health-timeout-ms <ms>` if startup readiness needs a different timeout window.
 
 ## First implementation target

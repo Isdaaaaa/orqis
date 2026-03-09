@@ -36,6 +36,7 @@ Implement the `orqis init` vertical slice: local runtime boot + tunnel URL hando
 - [x] Add tunnel adapter abstraction with Cloudflare-first strategy and ngrok fallback
   - Acceptance criteria: CLI can launch at least one tunnel provider and returns public URL with provider metadata.
   - Summary: Replaced the tunnel package placeholder with provider adapters and an ordered fallback strategy, then wired `orqis init` to start tunnel sessions, emit `public_url`, and report provider metadata.
+  - Summary (follow-up): Removed synthesized tunnel-domain success paths so tunnel startup now fails fast unless a provider URL is explicitly discovered/supplied.
   - Changed: `packages/tunnel/src/index.ts`, `packages/tunnel/test/scaffold.test.ts`, `apps/cli/src/cli.ts`, `apps/cli/test/init.test.ts`, `README.md`, `TODO.md`.
 
 - [ ] Add bootstrap smoke test for `orqis init`
