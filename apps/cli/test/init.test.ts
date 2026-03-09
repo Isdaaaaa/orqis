@@ -202,6 +202,17 @@ describe("orqis init config bootstrap", () => {
     ).rejects.toThrowError(/Cannot parse config file at .*\. Fix invalid JSON and retry\./);
   });
 
+  it("fails fast when config JSON root is not an object", async () => {
+    const configDir = await makeTempDir("orqis-init-invalid-json-root-");
+    const configPath = join(configDir, ORQIS_CONFIG_FILE_NAME);
+
+    await writeFile(`${configPath}`, "[]\n");
+
+    await expect(bootstrapOrqisConfig({ configDir })).rejects.toThrowError(
+      /Config file must contain a JSON object\./,
+    );
+  });
+
   it("preserves non-parse syntax errors thrown by migrations", async () => {
     const configDir = await makeTempDir("orqis-init-migration-syntax-error-");
     const configPath = join(configDir, ORQIS_CONFIG_FILE_NAME);
@@ -375,5 +386,16 @@ describe("orqis init config bootstrap", () => {
     expect(
       isCliEntrypoint(pathToFileURL(modulePath).href, argvEntry, resolvePath),
     ).toBe(true);
+  });
+
+  it("falls back to URL comparison when entrypoint resolution fails", () => {
+    const argvEntry = "/tmp/orqis";
+    const moduleUrl = pathToFileURL(argvEntry).href;
+
+    const resolvePath = (): string => {
+      throw new Error("realpath failed");
+    };
+
+    expect(isCliEntrypoint(moduleUrl, argvEntry, resolvePath)).toBe(true);
   });
 });
