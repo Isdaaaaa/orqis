@@ -1,11 +1,18 @@
+import { createServer, type Server } from "node:http";
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { isCliEntrypoint, runCli } from "../src/cli.ts";
+import {
+  isCliEntrypoint,
+  runCli,
+  startOrqisInitSession,
+  waitForWebRuntimeHealth,
+} from "../src/cli.ts";
 import {
   DEFAULT_ORQIS_CONFIG,
   ORQIS_CONFIG_DIR_ENV_VAR,
@@ -17,6 +24,7 @@ import {
 } from "../src/config.ts";
 
 const tempRoots: string[] = [];
+const activeServers = new Set<Server>();
 const ENFORCE_POSIX_PERMISSIONS = process.platform !== "win32";
 
 async function makeTempDir(prefix: string): Promise<string> {
@@ -25,9 +33,91 @@ async function makeTempDir(prefix: string): Promise<string> {
   return root;
 }
 
+async function closeServer(server: Server): Promise<void> {
+  if (!server.listening) {
+    activeServers.delete(server);
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      activeServers.delete(server);
+
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
+}
+
+async function createTestRuntime(
+  options: {
+    readonly healthStatusCode?: number;
+    readonly healthPayload?: unknown;
+  } = {},
+): Promise<{
+  baseUrl: string;
+  healthUrl: string;
+  stop(): Promise<void>;
+}> {
+  const server = createServer((request, response) => {
+    if (request.method === "GET" && request.url === "/health") {
+      response.writeHead(options.healthStatusCode ?? 200, {
+        "content-type": "application/json; charset=utf-8",
+      });
+      response.end(
+        `${JSON.stringify(
+          options.healthPayload ?? {
+            service: "@orqis/web",
+            status: "ok",
+            uptimeMs: 1,
+          },
+        )}\n`,
+      );
+      return;
+    }
+
+    response.writeHead(200, {
+      "content-type": "text/plain; charset=utf-8",
+    });
+    response.end("runtime ready");
+  });
+
+  activeServers.add(server);
+
+  await new Promise<void>((resolve, reject) => {
+    server.listen(0, "127.0.0.1", (error?: Error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
+
+  const address = server.address() as AddressInfo;
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  return {
+    baseUrl,
+    healthUrl: `${baseUrl}/health`,
+    stop: async () => {
+      await closeServer(server);
+    },
+  };
+}
+
 afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+
+  for (const server of [...activeServers]) {
+    await closeServer(server);
+  }
 
   for (const root of tempRoots.splice(0)) {
     await rm(root, { recursive: true, force: true });
@@ -323,23 +413,265 @@ describe("orqis init config bootstrap", () => {
     expect(result.status).toBe("created");
     expect(result.configDir).toBe(configDir);
   });
+});
 
-  it("executes via `orqis init` command arguments", async () => {
+describe("orqis init runtime bootstrap", () => {
+  it("retries health checks until the web runtime is ready", async () => {
+    const fetchImpl = vi
+      .fn<(input: string | URL | Request, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValueOnce(
+        new Response('{"status":"starting"}', {
+          status: 503,
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            service: "@orqis/web",
+            status: "ok",
+            uptimeMs: 1,
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json; charset=utf-8",
+            },
+          },
+        ),
+      );
+    const sleep = vi.fn(async () => undefined);
+
+    await expect(
+      waitForWebRuntimeHealth({
+        url: "http://127.0.0.1:43110/health",
+        fetchImpl,
+        sleep,
+        timeoutMs: 500,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts hanging health checks when the timeout is reached", async () => {
+    const fetchImpl = vi
+      .fn<(input: string | URL | Request, init?: RequestInit) => Promise<Response>>()
+      .mockImplementation((_input, init) => {
+        return new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+
+          if (signal == null) {
+            reject(new Error("missing abort signal"));
+            return;
+          }
+
+          if (signal.aborted) {
+            reject(new Error("health request aborted"));
+            return;
+          }
+
+          signal.addEventListener(
+            "abort",
+            () => {
+              reject(new Error("health request aborted"));
+            },
+            { once: true },
+          );
+        });
+      });
+    const startedAt = Date.now();
+
+    await expect(
+      waitForWebRuntimeHealth({
+        url: "http://127.0.0.1:43110/health",
+        fetchImpl,
+        intervalMs: 10,
+        timeoutMs: 50,
+      }),
+    ).rejects.toThrowError(/health request aborted/);
+
+    expect(Date.now() - startedAt).toBeLessThan(1_500);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "http://127.0.0.1:43110/health",
+      expect.objectContaining({
+        signal: expect.any(Object),
+      }),
+    );
+  });
+
+  it("starts the runtime, waits for health, and returns URLs", async () => {
+    const configDir = await makeTempDir("orqis-init-runtime-session-");
+    let runtimeStopCalls = 0;
+
+    const session = await startOrqisInitSession(
+      {
+        configDir,
+      },
+      {
+        startWebRuntime: async () => {
+          const runtime = await createTestRuntime();
+          return {
+            ...runtime,
+            stop: async () => {
+              runtimeStopCalls += 1;
+              await runtime.stop();
+            },
+          };
+        },
+      },
+    );
+
+    expect(session.status).toBe("created");
+    expect(session.localUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    expect(session.healthUrl).toBe(`${session.localUrl}/health`);
+
+    await session.runtime.stop();
+    expect(runtimeStopCalls).toBe(1);
+  });
+
+  it("returns clear errors when the web runtime port is already in use", async () => {
+    const configDir = await makeTempDir("orqis-init-port-in-use-");
+    const occupiedRuntime = await createTestRuntime();
+    const occupiedPort = Number.parseInt(
+      new URL(occupiedRuntime.baseUrl).port,
+      10,
+    );
+    const error = vi.spyOn(console, "error").mockImplementation(() => {
+      return;
+    });
+
+    await writeFile(
+      join(configDir, ORQIS_CONFIG_FILE_NAME),
+      `${JSON.stringify(
+        {
+          ...DEFAULT_ORQIS_CONFIG,
+          runtime: {
+            host: "127.0.0.1",
+            port: occupiedPort,
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const exitCode = await runCli(
+      ["node", "orqis", "init", "--config-dir", configDir],
+      {
+        startWebRuntime: async () => {
+          const runtimeError = new Error("listen EADDRINUSE") as NodeJS.ErrnoException;
+          runtimeError.code = "EADDRINUSE";
+          throw runtimeError;
+        },
+      },
+    );
+
+    expect(exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringMatching(/port is already in use/),
+    );
+
+    await occupiedRuntime.stop();
+  });
+
+  it("stops the runtime and surfaces health-check timeout failures clearly", async () => {
+    const configDir = await makeTempDir("orqis-init-health-failure-");
+    const error = vi.spyOn(console, "error").mockImplementation(() => {
+      return;
+    });
+    const stop = vi.fn(async () => {
+      return;
+    });
+    const fetchImpl = vi
+      .fn<(input: string | URL | Request, init?: RequestInit) => Promise<Response>>()
+      .mockImplementation((_input, init) => {
+        return new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+
+          if (signal == null) {
+            reject(new Error("missing abort signal"));
+            return;
+          }
+
+          if (signal.aborted) {
+            reject(new Error("health request aborted"));
+            return;
+          }
+
+          signal.addEventListener(
+            "abort",
+            () => {
+              reject(new Error("health request aborted"));
+            },
+            { once: true },
+          );
+        });
+      });
+
+    const exitCode = await runCli(
+      [
+        "node",
+        "orqis",
+        "init",
+        "--config-dir",
+        configDir,
+        "--health-timeout-ms",
+        "50",
+      ],
+      {
+        fetchImpl,
+        startWebRuntime: async () => ({
+          baseUrl: "http://127.0.0.1:43110",
+          healthUrl: "http://127.0.0.1:43110/health",
+          stop,
+        }),
+      },
+    );
+
+    expect(exitCode).toBe(1);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringMatching(/did not pass health checks/),
+    );
+  });
+
+  it("executes via `orqis init` command arguments and reports runtime readiness", async () => {
     const configDir = await makeTempDir("orqis-init-cli-");
     const log = vi.spyOn(console, "log").mockImplementation(() => {
       return;
     });
 
-    const exitCode = await runCli([
-      "node",
-      "orqis",
-      "init",
-      "--config-dir",
-      configDir,
-    ]);
+    const exitCode = await runCli(
+      [
+        "node",
+        "orqis",
+        "init",
+        "--config-dir",
+        configDir,
+        "--health-timeout-ms",
+        "1000",
+      ],
+      {
+        startWebRuntime: async () => createTestRuntime(),
+        waitForShutdown: async (runtime) => {
+          await runtime.stop();
+        },
+      },
+    );
 
     expect(exitCode).toBe(0);
     expect(log).toHaveBeenCalledWith("orqis init: created");
+    expect(log).toHaveBeenCalledWith(
+      expect.stringMatching(/^local_url=http:\/\/127\.0\.0\.1:\d+$/),
+    );
+    expect(log).toHaveBeenCalledWith(
+      expect.stringMatching(/^health_url=http:\/\/127\.0\.0\.1:\d+\/health$/),
+    );
+    expect(log).toHaveBeenCalledWith("web_runtime=ready");
   });
 
   it("returns non-zero for invalid CLI arguments without throwing", async () => {
@@ -370,7 +702,9 @@ describe("orqis init config bootstrap", () => {
       expect.stringMatching(/"runtime" must be an object when provided/),
     );
   });
+});
 
+describe("CLI entrypoint detection", () => {
   it("detects symlinked entrypoint paths as the CLI entry module", () => {
     const modulePath = "/repo/apps/cli/dist/cli.js";
     const argvEntry = "/tmp/orqis";
