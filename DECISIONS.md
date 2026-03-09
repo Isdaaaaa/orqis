@@ -126,8 +126,28 @@ Tradeoffs:
 
 - Defers early visible PM-agent collaboration features by one step.
 
+## D-007: Use Cloudflare-first tunnel startup with ngrok fallback
+
+- Status: Accepted
+- Date: 2026-03-09
+
+Decision:
+
+- Resolve tunnel providers in configured order with `cloudflare` first and `ngrok` fallback by default.
+- Return tunnel session metadata (`provider`, `publicUrl`, strategy, attempted providers) to the CLI output contract.
+
+Why:
+
+- Preserves a provider-neutral adapter boundary while giving a deterministic first-choice provider.
+- Provides a resilient startup path when the primary provider is unavailable.
+- Keeps CLI output explicit for downstream automation and smoke checks.
+
+Tradeoffs:
+
+- Fallback behavior can mask primary-provider degradation without explicit observability.
+- Provider-specific capabilities are constrained by the shared metadata contract.
+
 ## Open questions
 
 - Which auth mode is best for MVP: local owner account only, or lightweight multi-user support?
-- Should tunnel default be Cloudflare only at first, or Cloudflare + ngrok immediately?
 - At what threshold should persistence migrate from SQLite to Postgres for larger deployments?

@@ -63,12 +63,15 @@ importers:
 
   packages/tunnel:
     devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.37
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
       vitest:
         specifier: ^2.1.8
-        version: 2.1.9(@types/node@25.3.5)
+        version: 2.1.9(@types/node@20.19.37)
 
 packages:
 
