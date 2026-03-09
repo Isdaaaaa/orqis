@@ -33,8 +33,10 @@ Implement the `orqis init` vertical slice: local runtime boot + tunnel URL hando
   - Summary (follow-up): Added runtime startup, health-check, and shutdown coverage across CLI and web package tests, plus a built-artifact verification pass for the default runtime loader.
   - Changed: `apps/cli/src/cli.ts`, `apps/cli/src/index.ts`, `apps/cli/test/init.test.ts`, `apps/web/src/index.ts`, `apps/web/test/runtime.test.ts`, `apps/web/package.json`, `pnpm-lock.yaml`, `README.md`, `docs/architecture.md`, `TODO.md`.
 
-- [ ] Add tunnel adapter abstraction with Cloudflare-first strategy and ngrok fallback
+- [x] Add tunnel adapter abstraction with Cloudflare-first strategy and ngrok fallback
   - Acceptance criteria: CLI can launch at least one tunnel provider and returns public URL with provider metadata.
+  - Summary: Replaced the tunnel package placeholder with provider adapters and an ordered fallback strategy, then wired `orqis init` to start tunnel sessions, emit `public_url`, and report provider metadata.
+  - Changed: `packages/tunnel/src/index.ts`, `packages/tunnel/test/scaffold.test.ts`, `apps/cli/src/cli.ts`, `apps/cli/test/init.test.ts`, `README.md`, `TODO.md`.
 
 - [ ] Add bootstrap smoke test for `orqis init`
   - Acceptance criteria: automated test verifies config generation, runtime boot, and URL output contract.

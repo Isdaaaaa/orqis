@@ -23,14 +23,43 @@ interface WebRuntimeHandle {
   stop(): Promise<void>;
 }
 
+interface TunnelStartOptions {
+  readonly localUrl: string;
+  readonly providerOrder?: readonly string[];
+}
+
+interface TunnelSessionMetadata {
+  readonly strategy: string;
+  readonly attemptedProviders: readonly string[];
+}
+
+interface TunnelSession {
+  readonly provider: string;
+  readonly publicUrl: string;
+  readonly metadata: TunnelSessionMetadata;
+  stop(): Promise<void>;
+}
+
+interface TunnelProviderFailure {
+  readonly provider: string;
+  readonly message: string;
+}
+
+interface TunnelStartFailureError {
+  readonly failures: readonly TunnelProviderFailure[];
+  readonly attemptedProviders: readonly string[];
+}
+
 type ResolveFilePath = (filePath: string) => string;
 type StartWebRuntime = (options: RuntimeConfig) => Promise<WebRuntimeHandle>;
+type StartTunnel = (options: TunnelStartOptions) => Promise<TunnelSession>;
 type FetchLike = typeof fetch;
 type Sleep = (durationMs: number) => Promise<void>;
 
 interface RunCliDependencies {
   bootstrapConfig?: typeof bootstrapOrqisConfig;
   startWebRuntime?: StartWebRuntime;
+  startTunnel?: StartTunnel;
   fetchImpl?: FetchLike;
   sleep?: Sleep;
   waitForShutdown?: (runtime: WebRuntimeHandle) => Promise<void>;
@@ -51,6 +80,9 @@ export interface OrqisInitSession {
   readonly status: "created" | "updated" | "unchanged";
   readonly localUrl: string;
   readonly healthUrl: string;
+  readonly publicUrl: string;
+  readonly tunnelProvider: string;
+  readonly tunnelMetadata: TunnelSessionMetadata;
   readonly runtime: WebRuntimeHandle;
 }
 
@@ -70,6 +102,14 @@ function hasErrnoCode(
   );
 }
 
+function isTunnelStartFailureError(error: unknown): error is TunnelStartFailureError {
+  if (!isRecord(error)) {
+    return false;
+  }
+
+  return Array.isArray(error.failures) && Array.isArray(error.attemptedProviders);
+}
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -87,6 +127,26 @@ function resolveRuntimeConfig(config: Record<string, unknown>): RuntimeConfig {
         ? runtime.port
         : DEFAULT_ORQIS_CONFIG.runtime.port,
   };
+}
+
+function resolveTunnelProviderOrder(config: Record<string, unknown>): string[] {
+  const defaultOrder = [...DEFAULT_ORQIS_CONFIG.tunnel.providers];
+  const tunnel = isRecord(config.tunnel) ? config.tunnel : undefined;
+
+  if (!tunnel || !Array.isArray(tunnel.providers)) {
+    return defaultOrder;
+  }
+
+  const providers = tunnel.providers
+    .filter((provider): provider is string => typeof provider === "string")
+    .map((provider) => provider.trim().toLowerCase())
+    .filter((provider) => provider.length > 0);
+
+  if (providers.length === 0) {
+    return defaultOrder;
+  }
+
+  return [...new Set(providers)];
 }
 
 function delay(durationMs: number): Promise<void> {
@@ -126,11 +186,49 @@ async function loadWebRuntimeStarter(): Promise<StartWebRuntime> {
   );
 }
 
+async function loadTunnelStarter(): Promise<StartTunnel> {
+  const moduleCandidates = [
+    new URL("../../../packages/tunnel/dist/index.js", import.meta.url),
+    new URL("../../../packages/tunnel/src/index.ts", import.meta.url),
+  ];
+
+  let lastError: unknown;
+
+  for (const candidate of moduleCandidates) {
+    try {
+      const module = (await import(candidate.href)) as {
+        startTunnelWithFallback?: StartTunnel;
+      };
+
+      if (typeof module.startTunnelWithFallback !== "function") {
+        throw new Error(
+          `Resolved ${candidate.pathname} but it does not export startTunnelWithFallback().`,
+        );
+      }
+
+      return module.startTunnelWithFallback;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw new Error(
+    `Cannot load the Orqis tunnel module. Build the workspace or run from the repository root. Last error: ${getErrorMessage(lastError)}`,
+  );
+}
+
 async function startWebRuntimeWithDefaultModule(
   options: RuntimeConfig,
 ): Promise<WebRuntimeHandle> {
   const startWebRuntime = await loadWebRuntimeStarter();
   return startWebRuntime(options);
+}
+
+async function startTunnelWithDefaultModule(
+  options: TunnelStartOptions,
+): Promise<TunnelSession> {
+  const startTunnel = await loadTunnelStarter();
+  return startTunnel(options);
 }
 
 function formatRuntimeAddress(config: RuntimeConfig): string {
@@ -158,6 +256,73 @@ function formatHealthCheckError(
   timeoutMs: number,
 ): string {
   return `Web runtime did not pass health checks at ${url} within ${timeoutMs}ms: ${getErrorMessage(error)}`;
+}
+
+function formatTunnelLaunchError(
+  error: unknown,
+  localUrl: string,
+  providerOrder: readonly string[],
+): string {
+  const fallbackAttemptedProviders = providerOrder.join(",");
+
+  if (!isTunnelStartFailureError(error)) {
+    return `Tunnel could not start for ${localUrl}: ${getErrorMessage(error)}`;
+  }
+
+  const attemptedProviders =
+    error.attemptedProviders.length > 0
+      ? error.attemptedProviders.join(",")
+      : fallbackAttemptedProviders;
+  const failureSummary = error.failures
+    .map((failure) => `${failure.provider}: ${failure.message}`)
+    .join("; ");
+
+  return `Tunnel could not start for ${localUrl}. Tried providers [${attemptedProviders}]: ${failureSummary}`;
+}
+
+function composeRuntimeWithTunnel(
+  runtime: WebRuntimeHandle,
+  tunnel: TunnelSession,
+): WebRuntimeHandle {
+  let stopPromise: Promise<void> | undefined;
+
+  return {
+    baseUrl: runtime.baseUrl,
+    healthUrl: runtime.healthUrl,
+    stop: async (): Promise<void> => {
+      if (stopPromise !== undefined) {
+        return stopPromise;
+      }
+
+      stopPromise = (async () => {
+        let tunnelStopError: unknown;
+
+        try {
+          await tunnel.stop();
+        } catch (error) {
+          tunnelStopError = error;
+        }
+
+        try {
+          await runtime.stop();
+        } catch (error) {
+          if (tunnelStopError !== undefined) {
+            throw new Error(
+              `Failed to stop tunnel (${getErrorMessage(tunnelStopError)}) and runtime (${getErrorMessage(error)}).`,
+            );
+          }
+
+          throw error;
+        }
+
+        if (tunnelStopError !== undefined) {
+          throw new Error(`Failed to stop tunnel: ${getErrorMessage(tunnelStopError)}`);
+        }
+      })();
+
+      return stopPromise;
+    },
+  };
 }
 
 export async function waitForWebRuntimeHealth(
@@ -232,6 +397,7 @@ export async function startOrqisInitSession(
   const bootstrapConfig = dependencies.bootstrapConfig ?? bootstrapOrqisConfig;
   const startWebRuntime =
     dependencies.startWebRuntime ?? startWebRuntimeWithDefaultModule;
+  const startTunnel = dependencies.startTunnel ?? startTunnelWithDefaultModule;
   const fetchImpl = dependencies.fetchImpl ?? fetch;
   const sleep = dependencies.sleep ?? delay;
   const bootstrapResult = await bootstrapConfig({
@@ -264,11 +430,27 @@ export async function startOrqisInitSession(
     );
   }
 
+  const providerOrder = resolveTunnelProviderOrder(bootstrapResult.config);
+
+  let tunnel: TunnelSession;
+  try {
+    tunnel = await startTunnel({
+      localUrl: runtime.baseUrl,
+      providerOrder,
+    });
+  } catch (error) {
+    await runtime.stop().catch(() => undefined);
+    throw new Error(formatTunnelLaunchError(error, runtime.baseUrl, providerOrder));
+  }
+
   return {
     ...bootstrapResult,
     localUrl: runtime.baseUrl,
     healthUrl: runtime.healthUrl,
-    runtime,
+    publicUrl: tunnel.publicUrl,
+    tunnelProvider: tunnel.provider,
+    tunnelMetadata: tunnel.metadata,
+    runtime: composeRuntimeWithTunnel(runtime, tunnel),
   };
 }
 
@@ -354,6 +536,12 @@ export async function runCli(
         console.log(`config_file=${session.configFilePath}`);
         console.log(`local_url=${session.localUrl}`);
         console.log(`health_url=${session.healthUrl}`);
+        console.log(`public_url=${session.publicUrl}`);
+        console.log(`tunnel_provider=${session.tunnelProvider}`);
+        console.log(`tunnel_strategy=${session.tunnelMetadata.strategy}`);
+        console.log(
+          `tunnel_attempted_providers=${session.tunnelMetadata.attemptedProviders.join(",")}`,
+        );
         console.log("web_runtime=ready");
 
         const waitForShutdown =

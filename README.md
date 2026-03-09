@@ -75,7 +75,8 @@ Common commands:
 Current Phase 1 runtime behavior:
 
 - `node apps/cli/dist/cli.js init` starts the local web runtime and keeps serving until interrupted.
-- `orqis init` prints `local_url` and `health_url` after the CLI confirms the runtime is healthy.
+- `orqis init` prints `local_url`, `health_url`, `public_url`, and tunnel provider metadata after the CLI confirms runtime and tunnel readiness.
+- Tunnel startup uses an ordered provider strategy (`cloudflare` first, `ngrok` fallback) based on `config.tunnel.providers`.
 - Use `--health-timeout-ms <ms>` if startup readiness needs a different timeout window.
 
 ## First implementation target
