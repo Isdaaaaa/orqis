@@ -301,6 +301,118 @@ A task is done when:
   - PR status
   - follow-up risks or next steps
 
+## TODO classification rules for discovered work
+
+When updating `TODO.md`, use a phase-local structure for discovered work and hardening.
+
+### Additional fixes discovered during the current phase
+
+Use this category for work that:
+
+- was not explicitly listed in the roadmap or current phase tasks
+- was discovered during implementation, testing, debugging, or manual validation
+- was implemented or partially implemented as part of completing the current slice
+
+Placement rules:
+
+- place these items under the current phase
+- use a subsection named `Additional fixes discovered during Phase X`
+- if the fix is already completed, record it as a completed checklist item with nested summary/change notes
+- if the fix was discovered but not completed, do not place it here; place it under `Hardening before Phase X+1 > Unclassified`
+
+### Hardening before the next phase
+
+Use this as the parent section for all hardening discovered in the current phase.
+
+Placement rules:
+
+- place this section under the current phase
+- use a subsection named `Hardening before Phase X+1`
+- place that subsection above the next phase header
+
+Inside `Hardening before Phase X+1`, use the following classification subsections:
+
+#### Must finish before Phase X+1
+
+Use this only for work that:
+
+- has been classified by `roadmap-next` or an explicit planning pass
+- is considered necessary before moving into the next phase
+
+#### Unclassified
+
+Use this for work that:
+
+- was discovered during implementation or review
+- has not yet been triaged by `roadmap-next` or planning
+- may or may not need to be finished before the next phase
+
+#### Safe to defer
+
+Use this for work that:
+
+- has been triaged as non-blocking
+- is useful but not required before the next phase
+- should remain visible without blocking momentum
+
+#### Move to later phase
+
+Use this for work that:
+
+- has been triaged as better suited to a later phase
+- should not be treated as current-phase hardening
+
+## Classification authority
+
+### implement
+
+The implement phase may:
+
+- record completed extra fixes under `Additional fixes discovered during Phase X`
+- add newly discovered unfinished follow-up items under `Hardening before Phase X+1 > Unclassified`
+
+The implement phase must not automatically place newly discovered work into:
+
+- `Must finish before Phase X+1`
+- `Safe to defer`
+- `Move to later phase`
+
+unless the user explicitly asks or a prior planning/roadmap pass already classified it.
+
+### review
+
+The review phase may:
+
+- add non-blocking follow-up items under `Hardening before Phase X+1 > Unclassified`
+- report blocking issues separately
+
+The review phase must not automatically place newly discovered non-blocking items into:
+
+- `Must finish before Phase X+1`
+- `Safe to defer`
+- `Move to later phase`
+
+unless they were already classified by planning or roadmap triage.
+
+### roadmap-next
+
+The roadmap-next phase is the primary classifier for items in `Hardening before Phase X+1 > Unclassified`.
+
+When reviewing a phase transition, roadmap-next should inspect all unclassified hardening items and classify them into:
+
+- `Must finish before Phase X+1`
+- `Safe to defer`
+- `Move to later phase`
+
+Only items judged necessary before moving on should be placed in `Must finish before Phase X+1`.
+
+## General rules
+
+- Do not dump discovered work under the last completed task unless it is directly part of that task’s completed summary
+- Do not treat every non-blocking follow-up item as required pre-phase hardening
+- Keep TODO structure readable and phase-local
+- Prefer clear classification inside the hardening section over backlog dumping
+
 ## Fallback behavior
 
 - If a phase file is missing, say so and proceed with the closest sensible default for that phase

@@ -90,8 +90,9 @@ Implement the requested task cleanly and with minimal scope.
 5. Validate behavior when appropriate
 6. Update `TODO.md` if the task is completed
 7. Add a short nested summary under the completed TODO item
-8. If non-blocking follow-up items are discovered, add them to `TODO.md` as hardening tasks
-9. Update `README.md` or `DECISIONS.md` only if needed
+8. If additional completed fixes are discovered during implementation that were not explicitly on the roadmap, record them under `Additional fixes discovered during Phase X`
+9. If unfinished follow-up work is discovered, add it to `TODO.md` under `Hardening before Phase X+1 > Unclassified`
+10. Update `README.md` or `DECISIONS.md` only if needed
 
 ## Rules
 
@@ -103,6 +104,12 @@ Implement the requested task cleanly and with minimal scope.
 - If the task is too large or ambiguous to implement safely, stop and recommend `plan:` first
 - Do not automatically fix non-blocking follow-up items in the same slice unless the user explicitly asks
 - Only blocking issues should prevent completion of the current slice
+- Follow the TODO classification rules in `AGENTS.md`
+- Do not place newly discovered follow-up work directly into:
+  - `Must finish before Phase X+1`
+  - `Safe to defer`
+  - `Move to later phase`
+    unless it was already classified by planning or roadmap triage
 
 ## Required issue classification
 
@@ -111,30 +118,16 @@ At the end, classify all remaining concerns into:
 - **Blocking now**: must be fixed before merge because they break acceptance criteria, correctness, safety, or the current slice
 - **Non-blocking follow-up**: safe to defer to a later slice or hardening pass
 
-## TODO placement rule for non-blocking follow-up
+## TODO placement rule
 
-If non-blocking follow-up items are found:
+When updating `TODO.md`, follow the structure from `AGENTS.md`.
 
-- add them to `TODO.md`
-- place them **under the current phase** in a subsection named `Hardening before next phase`, or
-- if that subsection already exists, append to it
-- place that subsection **before the next phase header**, not at the bottom of the file
-- write them as actionable checklist tasks, not vague notes
+Use:
 
-Example placement:
+- `Additional fixes discovered during Phase X` for extra fixes already completed during the slice
+- `Hardening before Phase X+1 > Unclassified` for newly discovered unfinished follow-up work
 
-### Phase 1: Runtime and bootstrap path
-
-- [x] Completed task
-  - Summary: ...
-  - Changed: ...
-
-#### Hardening before Phase 2
-
-- [ ] Add stronger workspace smoke validation
-- [ ] Improve CLI startup timeout diagnostics
-
-### Phase 2: Projects and persistent workspaces
+Do not use a flat `Hardening before next phase` list.
 
 ## Output
 
@@ -145,6 +138,6 @@ Example placement:
 5. validation performed
 6. blocking now
 7. non-blocking follow-up
-8. TODO updates made for non-blocking follow-up
+8. TODO updates made
 9. PR status
 10. follow-up risks or next steps

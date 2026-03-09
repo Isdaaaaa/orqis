@@ -16,10 +16,15 @@ You are choosing the next best task based on current repo state.
 
 ## Required MCP
 
+Default:
+
 - `filesystem`
 - `sequential-thinking`
-- `github` if repo/branch context is useful
-- `context7` only if research is needed
+
+Use when needed:
+
+- `github` for repo/branch/PR context
+- `context7` for technical research
 
 ## File permissions
 
@@ -42,10 +47,14 @@ Recommend what to build next.
 6. Update `TODO.md` if needed
 7. Choose one clear current focus
 8. If the current phase is nearly complete, decide whether the phase is ready to close
-9. If only hardening items remain, classify them into:
-   - must finish before next phase
-   - safe to defer
-10. Choose the next task accordingly
+9. If hardening items remain, inspect the current phase’s `Hardening before Phase X+1` section
+10. Classify any items under `Unclassified` into:
+
+- `Must finish before Phase X+1`
+- `Safe to defer`
+- `Move to later phase`
+
+11. Choose the next task accordingly
 
 ## Rules
 
@@ -53,14 +62,16 @@ Recommend what to build next.
 - Prefer highest-leverage next step
 - Avoid overengineering
 - Choose one best task, not many equally-weighted answers
-- Be concrete and implementation oriented
+- Be concrete and implementation-oriented
 - If the current phase appears mostly complete, do not assume all hardening items must be finished before moving on
-- Recommend the minimum hardening needed before next phase
+- Recommend the minimum hardening needed before the next phase
 - If only hardening items remain, decide whether to:
   - close the phase now
   - do one final hardening task
   - or defer the remaining hardening and start the next phase
 - When choosing the next task, prefer momentum over polishing non-blocking follow-up work
+- Follow the TODO classification rules in `AGENTS.md`
+- `roadmap-next` is the main classifier for items in `Hardening before Phase X+1 > Unclassified`
 
 ## Output
 
@@ -70,4 +81,4 @@ Recommend what to build next.
 4. next 3 tasks
 5. TODO updates
 6. phase closeout decision
-7. hardening decision if relevant
+7. hardening classification if relevant

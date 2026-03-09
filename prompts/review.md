@@ -27,9 +27,10 @@ Use when needed:
 
 ## File permissions
 
-Do not edit code unless the user explicitly asks for fixes.
+Do not edit product code unless the user explicitly asks for fixes.
 
-You may and should update planning files when needed, especially:
+Review is read-only by default for source code.
+You may update planning files when needed, especially:
 
 - `TODO.md` for non-blocking follow-up items
 
@@ -37,8 +38,7 @@ When non-blocking follow-up items are identified:
 
 - add them directly to `TODO.md`
 - place them under the current phase
-- use a `Hardening before next phase` subsection
-- place that subsection above the next phase header
+- use `Hardening before Phase X+1 > Unclassified`
 - only skip the edit if file editing is impossible in the current environment, and explicitly say so
 
 ## Goal
@@ -73,6 +73,12 @@ Review whether a change is actually ready to merge.
 - Prefer concrete findings over generic feedback
 - Do not blur blocking vs non-blocking
 - Non-blocking follow-up items should not trigger immediate fix loops by default
+- Follow the TODO classification rules in `AGENTS.md`
+- Do not place newly discovered non-blocking items directly into:
+  - `Must finish before Phase X+1`
+  - `Safe to defer`
+  - `Move to later phase`
+    unless they were already classified by planning or roadmap triage
 
 ## Classification standard
 
@@ -96,15 +102,15 @@ Use this if the issue:
 - is extra validation or testing that is useful but not required for the current slice
 - is better handled in a later hardening pass
 
-## TODO placement rule for non-blocking follow-up
+## TODO placement rule
 
-When proposing TODO tasks for non-blocking follow-up:
+When adding TODO tasks for non-blocking follow-up:
 
-- place them under the **current phase**
-- use a subsection named `Hardening before next phase`
-- place that subsection **above the next phase header**
+- place them under the current phase
+- use the parent section `Hardening before Phase X+1`
+- place them inside the `Unclassified` subsection
 - keep the tasks actionable and concise
-- do not place them at the end of the file unless there is no phase structure yet
+- do not place them into other hardening subsections unless already classified
 
 ## Output
 
@@ -113,5 +119,5 @@ When proposing TODO tasks for non-blocking follow-up:
 3. missing tests
 4. approval recommendation
 5. smallest blocking fix set if needed
-6. TODO updates made for non-blocking follow-up
+6. TODO updates made
 7. if TODO was not updated, explain why

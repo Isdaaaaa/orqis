@@ -48,8 +48,9 @@ Produce a concrete implementation plan for one feature that is ready for impleme
    - branch name
    - risks
 4. Break the work into the smallest safe implementation slices when useful
-5. Identify likely **non-blocking hardening follow-up** items that should probably exist after this feature is implemented
+5. Identify likely non-blocking hardening follow-up items that should probably exist after this feature is implemented
 6. Suggest `TODO.md` updates if relevant
+7. If likely hardening or follow-up items are identified, place them using the classification structure defined in `AGENTS.md`
 
 ## Rules
 
@@ -61,38 +62,35 @@ Produce a concrete implementation plan for one feature that is ready for impleme
   - core implementation work needed now
   - likely hardening work that can happen later
 - Do not turn every future concern into immediate implementation scope
+- Follow the TODO classification rules in `AGENTS.md`
+- By default, newly identified hardening items should go under `Hardening before Phase X+1 > Unclassified`
+- Only place items into:
+  - `Must finish before Phase X+1`
+  - `Safe to defer`
+  - `Move to later phase`
+    if the plan explicitly classifies them
 
 ## Hardening follow-up planning rule
 
 If you identify likely non-blocking hardening items:
 
 - add them as actionable checklist items in `TODO.md`
-- place them under the **current phase**
-- use a subsection named `Hardening before next phase`
-- place that subsection **before the next phase header**
-- only include items that are realistic and relevant to the planned feature
+- place them under the current phase
+- use the parent subsection `Hardening before Phase X+1`
+- place them under `Unclassified` by default
+- only place them into:
+  - `Must finish before Phase X+1`
+  - `Safe to defer`
+  - `Move to later phase`
+    if you explicitly classify them during planning
 - do not overload TODO with speculative future ideas
-
-Example placement:
-
-### Phase 1: Runtime and bootstrap path
-
-- [ ] Current implementation task
-- [ ] Another implementation task
-
-#### Hardening before Phase 2
-
-- [ ] Improve startup timeout diagnostics
-- [ ] Add stronger smoke validation for bootstrap path
-
-### Phase 2: Projects and persistent workspaces
 
 ## Risk classification rule
 
 Classify risks into:
 
 - **Blocking now**: must be addressed in the implementation of this feature
-- **Non-blocking follow-up**: should be captured in TODO as hardening work before the next phase, but should not block implementation now
+- **Non-blocking follow-up**: should be captured in TODO as hardening work, but should not block implementation now
 
 ## Output
 
