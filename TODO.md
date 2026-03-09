@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Close Phase 1 by fixing ngrok tunnel target validation, then start Phase 2 schema and migrations.
+Start Phase 2 by implementing project/workspace schema and migrations.
 
 ## Completed
 
@@ -64,6 +64,7 @@ Safe to defer while Phase 2 starts:
 - [x] Fix Cloudflare tunnel public URL discovery to ignore disclaimer/documentation links
   - Summary: Tightened Cloudflare URL extraction to accept only tunnel hostnames (`*.trycloudflare.com` / `*.cfargotunnel.com`) and added regression coverage for the disclaimer-output ordering that previously produced non-tunnel URLs.
   - Changed: `packages/tunnel/src/index.ts`, `packages/tunnel/test/scaffold.test.ts`, `TODO.md`.
+- [ ] Add ngrok tunnel-discovery regression coverage for valid local-host aliases (`localhost`, `127.0.0.1`, `::1`, `0.0.0.0`) so strict target matching does not reject equivalent local runtime addresses
 - [ ] Tighten `orqis init --health-timeout-ms` validation to reject non-numeric suffix input (for example `10abc`)
 - [ ] Add CLI regression coverage that asserts `--health-timeout-ms` rejects non-numeric suffix input (for example `10abc`)
 - [ ] Add signal-shutdown test coverage for `waitForRuntimeShutdown` (listener cleanup and runtime stop invocation)
