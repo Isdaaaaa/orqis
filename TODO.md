@@ -132,6 +132,10 @@ Safe to defer while Phase 2 starts:
   - Summary (follow-up): Added regression fixtures/tests for config-dir propagation and runtime-process delayed-ready timeout behavior, then widened web runtime/persistence test timeouts to reduce false failures under worker contention.
   - Changed: `apps/cli/src/cli.ts`, `apps/cli/test/init.test.ts`, `apps/cli/test/fixtures/web-runtime-ready-requires-config-dir.mjs`, `apps/cli/test/fixtures/web-runtime-delayed-ready.mjs`, `apps/web/test/runtime.test.ts`, `apps/web/test/timeline-persistence.test.ts`, `README.md`, `TODO.md`.
 
+- [x] Fix workspace smoke CI failures from skipped native dependency build scripts
+  - Summary: Configured pnpm workspace install policy to allow required build scripts for `better-sqlite3` and `esbuild`, matching the web runtime/test dependency requirements on GitHub Actions.
+  - Changed: `package.json`, `TODO.md`.
+
 #### Hardening before Phase 3
 
 Must finish before Phase 3:
