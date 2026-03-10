@@ -86,8 +86,11 @@ Safe to defer while Phase 2 starts:
 - [ ] Build project creation flow in UI
   - Acceptance criteria: user can create/list/select projects and each project resolves to one persistent workspace.
 
-- [ ] Build workspace group chat timeline with persistence
+- [x] Build workspace group chat timeline with persistence
   - Acceptance criteria: messages survive restarts and reload in chronological order per workspace.
+  - Summary: Added a persistent SQLite-backed workspace timeline store with migration bootstrap, chronological per-workspace message queries, and append APIs in the web runtime.
+  - Summary (follow-up): Replaced the landing scaffold with a minimal timeline UI that can post/reload messages through the new workspace timeline endpoints.
+  - Changed: `apps/web/src/index.ts`, `apps/web/src/persistence.ts`, `apps/web/src/node-sqlite.d.ts`, `apps/web/test/runtime.test.ts`, `apps/web/test/timeline-persistence.test.ts`, `TODO.md`.
 
 - [ ] Add basic local session auth
   - Acceptance criteria: protected routes require login and session persistence works across refresh.
@@ -118,6 +121,21 @@ Safe to defer while Phase 2 starts:
   - Summary (follow-up): Kept parent-delete nulling semantics while adding regression coverage for cross-project parent-link rejection.
   - Changed: `packages/db/src/schema.ts`, `packages/db/migrations/0001_project_workspace_schema.sql`, `packages/db/test/migrations.test.ts`, `TODO.md`.
 
+- [x] Restore web timeline persistence compatibility with Node 20 baseline
+  - Summary: Replaced runtime usage of `node:sqlite` with `better-sqlite3` so workspace timeline persistence runs on the existing Node 20 engine/CI baseline without changing version requirements.
+  - Summary (follow-up): Added `sqlite:doctor`/`sqlite:bootstrap` recovery scripts, startup preflight validation, and concise README recovery steps for missing native bindings.
+  - Changed: `apps/web/src/persistence.ts`, `apps/web/src/node-sqlite.d.ts` (removed), `apps/web/scripts/sqlite-doctor.mjs`, `apps/web/scripts/sqlite-bootstrap.mjs`, `apps/web/package.json`, `package.json`, `README.md`, `pnpm-lock.yaml`, `TODO.md`.
+
+- [x] Fix dedicated runtime-process persistence path and startup timeout regressions
+  - Summary: Propagated the resolved `--config-dir` into dedicated runtime-process startup so SQLite defaults stay scoped to the active Orqis config directory instead of falling back to `~/.orqis`.
+  - Summary (follow-up): Aligned dedicated runtime-process readiness timeout with the effective `--health-timeout-ms` and raised the default timeout window to absorb first-run SQLite migration startup cost.
+  - Summary (follow-up): Added regression fixtures/tests for config-dir propagation and runtime-process delayed-ready timeout behavior, then widened web runtime/persistence test timeouts to reduce false failures under worker contention.
+  - Changed: `apps/cli/src/cli.ts`, `apps/cli/test/init.test.ts`, `apps/cli/test/fixtures/web-runtime-ready-requires-config-dir.mjs`, `apps/cli/test/fixtures/web-runtime-delayed-ready.mjs`, `apps/web/test/runtime.test.ts`, `apps/web/test/timeline-persistence.test.ts`, `README.md`, `TODO.md`.
+
+- [x] Fix workspace smoke CI failures from skipped native dependency build scripts
+  - Summary: Configured pnpm workspace install policy to allow required build scripts for `better-sqlite3` and `esbuild`, matching the web runtime/test dependency requirements on GitHub Actions.
+  - Changed: `package.json`, `TODO.md`.
+
 #### Hardening before Phase 3
 
 Must finish before Phase 3:
@@ -128,6 +146,8 @@ Must finish before Phase 3:
 Unclassified:
 - [ ] Add migration regression coverage for `messages`/`tasks`/`approvals` update-path guards so same-project/workspace linked ref triggers are verified on updates, not only inserts
 - [ ] Add migration regression coverage proving `parent_task_id` and `parent_message_id` are nulled on parent delete after composite lineage constraints
+- [ ] Add web-runtime API regression coverage for `GET/POST /api/workspaces/:workspaceId/messages` (validation errors, project/workspace conflict responses, and chronological payload ordering)
+- [ ] Harden web-runtime shutdown to close keep-alive connections promptly so `runtime.stop()` does not block for multi-second idle timeouts after request traffic
 
 Move to later phase:
 - [ ] Add query helpers for issue/task-centric run history so timeline and run drill-down share one contract (Phase 4 timeline/read-model hardening)

@@ -8,11 +8,13 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   DEFAULT_ORQIS_CONFIG,
   bootstrapOrqisConfig,
+  ORQIS_CONFIG_DIR_ENV_VAR,
 } from "./config.js";
 
-const DEFAULT_WEB_RUNTIME_HEALTH_TIMEOUT_MS = 5_000;
+const DEFAULT_WEB_RUNTIME_HEALTH_TIMEOUT_MS = 15_000;
 const DEFAULT_WEB_RUNTIME_HEALTH_INTERVAL_MS = 100;
-const DEFAULT_WEB_RUNTIME_PROCESS_START_TIMEOUT_MS = 5_000;
+const DEFAULT_WEB_RUNTIME_PROCESS_START_TIMEOUT_MS =
+  DEFAULT_WEB_RUNTIME_HEALTH_TIMEOUT_MS;
 const DEFAULT_WEB_RUNTIME_PROCESS_STOP_TIMEOUT_MS = 5_000;
 const WEB_RUNTIME_PROCESS_HOST_ENV_VAR = "ORQIS_WEB_RUNTIME_HOST";
 const WEB_RUNTIME_PROCESS_PORT_ENV_VAR = "ORQIS_WEB_RUNTIME_PORT";
@@ -22,6 +24,9 @@ const WEB_RUNTIME_START_ERROR_MESSAGE_TYPE = "orqis:web-runtime-start-error";
 interface RuntimeConfig {
   readonly host: string;
   readonly port: number;
+  readonly persistence?: {
+    readonly configDir?: string;
+  };
 }
 
 interface WebRuntimeHandle {
@@ -78,6 +83,7 @@ type ResolveWebRuntimeProcessEntrypoint = () => Promise<string | undefined>;
 type ForkProcess = typeof fork;
 
 interface StartWebRuntimeWithDefaultModuleDependencies {
+  readonly startupTimeoutMs?: number;
   readonly resolveProcessEntrypoint?: ResolveWebRuntimeProcessEntrypoint;
   readonly forkProcess?: ForkProcess;
 }
@@ -324,16 +330,21 @@ async function startWebRuntimeInDedicatedProcess(
   options: RuntimeConfig,
   dependencies: {
     readonly entrypointPath: string;
+    readonly startupTimeoutMs: number;
     readonly forkProcess?: ForkProcess;
   },
 ): Promise<WebRuntimeHandle> {
   const forkProcess = dependencies.forkProcess ?? fork;
+  const configDir = options.persistence?.configDir?.trim();
   const runtimeProcess = forkProcess(dependencies.entrypointPath, [], {
     stdio: ["ignore", "inherit", "inherit", "ipc"],
     env: {
       ...process.env,
       [WEB_RUNTIME_PROCESS_HOST_ENV_VAR]: options.host,
       [WEB_RUNTIME_PROCESS_PORT_ENV_VAR]: String(options.port),
+      ...(configDir === undefined || configDir.length === 0
+        ? {}
+        : { [ORQIS_CONFIG_DIR_ENV_VAR]: configDir }),
     },
   });
 
@@ -416,11 +427,11 @@ async function startWebRuntimeInDedicatedProcess(
       finish(() => {
         reject(
           new Error(
-            `Web runtime process did not signal readiness within ${DEFAULT_WEB_RUNTIME_PROCESS_START_TIMEOUT_MS}ms.`,
+            `Web runtime process did not signal readiness within ${dependencies.startupTimeoutMs}ms.`,
           ),
         );
       });
-    }, DEFAULT_WEB_RUNTIME_PROCESS_START_TIMEOUT_MS);
+    }, dependencies.startupTimeoutMs);
 
     startupTimeout.unref?.();
   });
@@ -495,10 +506,13 @@ async function startWebRuntimeWithDefaultModule(
   const resolveEntrypoint =
     dependencies.resolveProcessEntrypoint ?? resolveWebRuntimeProcessEntrypoint;
   const runtimeProcessEntrypoint = await resolveEntrypoint();
+  const startupTimeoutMs =
+    dependencies.startupTimeoutMs ?? DEFAULT_WEB_RUNTIME_PROCESS_START_TIMEOUT_MS;
 
   if (runtimeProcessEntrypoint !== undefined) {
     return startWebRuntimeInDedicatedProcess(options, {
       entrypointPath: runtimeProcessEntrypoint,
+      startupTimeoutMs,
       forkProcess: dependencies.forkProcess,
     });
   }
@@ -506,7 +520,11 @@ async function startWebRuntimeWithDefaultModule(
   // Source-mode fallback for local tests/runs when the web runtime process artifact
   // has not been built yet.
   const startWebRuntime = await loadWebRuntimeStarter();
-  return startWebRuntime(options);
+  return startWebRuntime({
+    host: options.host,
+    port: options.port,
+    persistence: options.persistence,
+  });
 }
 
 async function startTunnelWithDefaultModule(
@@ -680,12 +698,15 @@ export async function startOrqisInitSession(
   dependencies: RunCliDependencies = {},
 ): Promise<OrqisInitSession> {
   const bootstrapConfig = dependencies.bootstrapConfig ?? bootstrapOrqisConfig;
+  const healthTimeoutMs =
+    options.healthTimeoutMs ?? DEFAULT_WEB_RUNTIME_HEALTH_TIMEOUT_MS;
   const startWebRuntime =
     dependencies.startWebRuntime ??
     ((runtimeConfig: RuntimeConfig) =>
       startWebRuntimeWithDefaultModule(runtimeConfig, {
         resolveProcessEntrypoint:
           dependencies.resolveWebRuntimeProcessEntrypoint,
+        startupTimeoutMs: healthTimeoutMs,
       }));
   const startTunnel = dependencies.startTunnel ?? startTunnelWithDefaultModule;
   const fetchImpl = dependencies.fetchImpl ?? fetch;
@@ -693,7 +714,12 @@ export async function startOrqisInitSession(
   const bootstrapResult = await bootstrapConfig({
     configDir: options.configDir,
   });
-  const runtimeConfig = resolveRuntimeConfig(bootstrapResult.config);
+  const runtimeConfig: RuntimeConfig = {
+    ...resolveRuntimeConfig(bootstrapResult.config),
+    persistence: {
+      configDir: bootstrapResult.configDir,
+    },
+  };
 
   let runtime: WebRuntimeHandle;
   try {
@@ -705,7 +731,7 @@ export async function startOrqisInitSession(
   try {
     await waitForWebRuntimeHealth({
       url: runtime.healthUrl,
-      timeoutMs: options.healthTimeoutMs,
+      timeoutMs: healthTimeoutMs,
       fetchImpl,
       sleep,
     });
@@ -715,7 +741,7 @@ export async function startOrqisInitSession(
       formatHealthCheckError(
         error,
         runtime.healthUrl,
-        options.healthTimeoutMs ?? DEFAULT_WEB_RUNTIME_HEALTH_TIMEOUT_MS,
+        healthTimeoutMs,
       ),
     );
   }
