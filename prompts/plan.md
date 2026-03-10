@@ -11,6 +11,7 @@ You are planning one feature before implementation.
 - `DECISIONS.md`
 - relevant docs
 - relevant source files if they exist
+- relevant role overlay in `prompts/roles/` if the feature clearly maps to one
 
 ## Required MCP
 
@@ -69,6 +70,8 @@ Produce a concrete implementation plan for one feature that is ready for impleme
   - `Safe to defer`
   - `Move to later phase`
     if the plan explicitly classifies them
+- if the feature clearly maps to a specialist role, mention the most relevant role overlay for the later implement pass
+- by default, newly identified hardening items should go under `Hardening before Phase X+1 > Unclassified`
 
 ## Hardening follow-up planning rule
 
@@ -104,3 +107,4 @@ Classify risks into:
 8. non-blocking follow-up
 9. TODO updates made or recommended
 10. recommended TODO placement
+11. recommended role overlay for implementation

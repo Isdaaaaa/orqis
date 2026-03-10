@@ -39,11 +39,12 @@ Before acting, read these when they exist and are relevant:
 
 1. `AGENTS.md`
 2. the phase file in `prompts/`
-3. `TODO.md`
-4. `DECISIONS.md`
-5. `README.md`
-6. relevant files in `docs/`
-7. relevant source files for the task
+3. the relevant role overlay in `prompts/roles/` when applicable
+4. `TODO.md`
+5. `DECISIONS.md`
+6. `README.md`
+7. relevant files in `docs/`
+8. relevant source files for the task
 
 If a file does not exist yet, proceed without it and create or update it only if the current phase allows that.
 
@@ -218,6 +219,42 @@ Default:
 
 Use only for durable project preferences or long-lived workflow preferences, not temporary task state.
 
+## Role overlays
+
+Role overlays live in:
+
+- `prompts/roles/frontend.md`
+- `prompts/roles/backend.md`
+- `prompts/roles/database.md`
+- `prompts/roles/cli-runtime.md`
+- `prompts/roles/qa-review.md`
+
+These are specialist overlays, not standalone phase prompts.
+They refine how implementation or review should be performed for a specific task type.
+
+## Role routing
+
+When handling `implement:` tasks, infer the most relevant role overlay from the task type and read the matching file in `prompts/roles/`.
+
+Use these defaults:
+
+- UI, layout, components, responsiveness, theming -> `prompts/roles/frontend.md`
+- services, APIs, orchestration, approvals, state transitions -> `prompts/roles/backend.md`
+- schema, migrations, task model, audit events, relations -> `prompts/roles/database.md`
+- CLI, bootstrap, runtime, tunnel, health checks, config -> `prompts/roles/cli-runtime.md`
+
+Rules:
+
+- choose one primary role overlay
+- use one secondary role overlay only if necessary
+- do not stack many role overlays for one task
+- role overlays refine the work; they do not override repo workflow, phase behavior, or TODO rules
+
+When handling `review:` tasks:
+
+- apply `prompts/roles/qa-review.md` by default
+- additionally use API- or UI-specific evidence only when relevant to the task
+
 ## Output expectations by phase
 
 ### bootstrap
@@ -255,6 +292,8 @@ Use only for durable project preferences or long-lived workflow preferences, not
 ### implement
 
 - create branch
+- infer and apply the most relevant role overlay before implementing
+- use one primary role and one secondary role only if necessary
 - implement the change
 - add or update tests when appropriate
 - validate behavior when appropriate
@@ -265,11 +304,12 @@ Use only for durable project preferences or long-lived workflow preferences, not
 ### review
 
 - inspect branch or diff
+- apply the `qa-review` role overlay when classifying findings
 - prioritize correctness, missing tests, architecture drift, real risks, and scope creep
 - approve or reject
 - classify every finding into blocking now vs non-blocking follow-up
 - reject only if blocking issues exist
-- if non-blocking follow-up items exist, add them directly to `TODO.md` under the current phase in `Hardening before next phase`
+- if non-blocking follow-up items exist, add them to `TODO.md` under the current phase in `Hardening before Phase X+1 > Unclassified`
 - if rejected, identify the smallest blocking fix set only
 
 ### integrate

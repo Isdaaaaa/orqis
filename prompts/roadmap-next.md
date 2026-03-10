@@ -55,6 +55,7 @@ Recommend what to build next.
 - `Move to later phase`
 
 11. Choose the next task accordingly
+12. When recommending the next task, mention the most likely role overlay for implementation if it is clear
 
 ## Rules
 
@@ -82,3 +83,4 @@ Recommend what to build next.
 5. TODO updates
 6. phase closeout decision
 7. hardening classification if relevant
+8. recommended role overlay for the next task if clear

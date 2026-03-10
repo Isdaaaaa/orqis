@@ -4,6 +4,21 @@
 
 You are implementing one scoped task.
 
+## Role overlay
+
+Before implementing, infer the most relevant role overlay from `AGENTS.md` and read the matching file in `prompts/roles/`.
+
+Use one primary role overlay.
+Use one secondary role overlay only if truly necessary.
+Do not stack many role overlays for one task.
+
+Common mappings:
+
+- UI/layout/components/responsiveness/theming -> `prompts/roles/frontend.md`
+- services/APIs/orchestration/approvals/state transitions -> `prompts/roles/backend.md`
+- schema/migrations/task model/audit events/relations -> `prompts/roles/database.md`
+- CLI/bootstrap/runtime/tunnel/health/config -> `prompts/roles/cli-runtime.md`
+
 ## Read first
 
 - `AGENTS.md`
@@ -11,6 +26,7 @@ You are implementing one scoped task.
 - `DECISIONS.md`
 - relevant docs
 - relevant source files
+- the relevant role overlay from `prompts/roles/` if applicable
 
 ## Required MCP selection
 
@@ -110,6 +126,10 @@ Implement the requested task cleanly and with minimal scope.
   - `Safe to defer`
   - `Move to later phase`
     unless it was already classified by planning or roadmap triage
+- apply the inferred role overlay before implementing
+- let the role overlay refine the work, but do not let it override repo workflow, TODO rules, or phase behavior
+- if unfinished follow-up work is discovered, place it under `Hardening before Phase X+1 > Unclassified` according to `AGENTS.md`
+- if an extra fix is discovered and completed during the slice, record it under `Additional fixes discovered during Phase X`
 
 ## Required issue classification
 
@@ -131,13 +151,14 @@ Do not use a flat `Hardening before next phase` list.
 
 ## Output
 
-1. branch name
-2. summary of changes
-3. changed files
-4. tests added or updated
-5. validation performed
-6. blocking now
-7. non-blocking follow-up
-8. TODO updates made
-9. PR status
-10. follow-up risks or next steps
+1. role overlay used
+2. branch name
+3. summary of changes
+4. changed files
+5. tests added or updated
+6. validation performed
+7. blocking now
+8. non-blocking follow-up
+9. TODO updates made
+10. PR status
+11. follow-up risks or next steps
