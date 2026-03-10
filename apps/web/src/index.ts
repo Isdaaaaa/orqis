@@ -127,7 +127,7 @@ function getWebAppHtml(): string {
       align-items: center;
       padding: 0.75rem 0.5rem;
       gap: 0.85rem;
-      overflow: hidden;
+      overflow: visible;
     }
 
     .rail-top,
@@ -901,18 +901,18 @@ function getWebAppHtml(): string {
     const renderDetailView = () => {
       if (activeViewId === "files") {
         detailRegion.innerHTML =
-          "<div class=\"detail-card\"><h3>Files</h3><p>File navigation is staged for a follow-up slice. Continue collaboration in Main Chat and Agent Threads while this panel remains read-only.</p></div>";
+          '<div class="detail-card"><h3>Files</h3><p>File navigation is staged for a follow-up slice. Continue collaboration in Main Chat and Agent Threads while this panel remains read-only.</p></div>';
         return;
       }
 
       if (activeViewId === "assigned-agents") {
         detailRegion.innerHTML =
-          "<div class=\"detail-card\"><h3>Assigned Agents</h3><p>Role routing for this workspace.</p><ul class=\"agent-list\"><li><strong>Project Manager</strong><span>Coordinates plans, assignments, and approvals.</span></li><li><strong>Frontend Agent</strong><span>Owns UI shell and interaction delivery.</span></li><li><strong>Backend Agent</strong><span>Owns API contracts, state transitions, and persistence behavior.</span></li><li><strong>Reviewer</strong><span>Validates correctness, tests, and release readiness.</span></li></ul></div>";
+          '<div class="detail-card"><h3>Assigned Agents</h3><p>Role routing for this workspace.</p><ul class="agent-list"><li><strong>Project Manager</strong><span>Coordinates plans, assignments, and approvals.</span></li><li><strong>Frontend Agent</strong><span>Owns UI shell and interaction delivery.</span></li><li><strong>Backend Agent</strong><span>Owns API contracts, state transitions, and persistence behavior.</span></li><li><strong>Reviewer</strong><span>Validates correctness, tests, and release readiness.</span></li></ul></div>';
         return;
       }
 
       detailRegion.innerHTML =
-        "<div class=\"detail-card\"><h3>Section</h3><p>Select Main Chat or one of the Agent Threads to continue timeline collaboration.</p></div>";
+        '<div class="detail-card"><h3>Section</h3><p>Select Main Chat or one of the Agent Threads to continue timeline collaboration.</p></div>';
     };
 
     const isTimelineView = (viewId) => {
