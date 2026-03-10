@@ -109,8 +109,11 @@ Safe to defer while Phase 2 starts:
   - Summary (follow-up): Added runtime regression coverage for unauthenticated route protection, login/session creation, refresh persistence with the same cookie, and authenticated project/timeline API flows.
   - Changed: `apps/web/src/index.ts`, `apps/web/test/runtime.test.ts`, `README.md`, `TODO.md`.
 
-- [ ] Add specialist-agent adapter registry contract in core/runtime boundaries
+- [x] Add specialist-agent adapter registry contract in core/runtime boundaries
   - Acceptance criteria: adapter type registry supports execution + environment validation hooks and rejects unknown adapter types for task execution.
+  - Summary: Added a typed specialist-agent adapter contract in `@orqis/core` with execution, environment-validation, and capability-discovery hooks behind an explicit adapter-type registry.
+  - Summary (follow-up): Added fail-closed registry errors for unknown/invalid/duplicate adapter types and covered adapter hook routing plus unknown-type rejection in package tests.
+  - Changed: `packages/core/src/index.ts`, `packages/core/src/specialist-agent-adapter-registry.ts`, `packages/core/test/specialist-agent-adapter-registry.test.ts`, `TODO.md`.
 
 #### Additional fixes discovered during Phase 2
 
