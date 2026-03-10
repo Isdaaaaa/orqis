@@ -73,7 +73,7 @@ Common commands:
 - `pnpm -r typecheck`
 - `pnpm orqis:init` (runs the built local CLI; global `orqis` install is not required yet)
 
-Current Phase 1 runtime behavior:
+Current runtime behavior:
 
 - `node apps/cli/dist/cli.js init` launches the local web runtime as a dedicated child process and keeps serving until interrupted.
 - `orqis init` prints `local_url`, `health_url`, `public_url`, and tunnel provider metadata after the CLI confirms runtime and tunnel readiness.
@@ -81,6 +81,9 @@ Current Phase 1 runtime behavior:
 - Tunnel adapters now manage `cloudflared`/`ngrok` child-process lifecycle directly and auto-discover public URLs; manual `ORQIS_*_PUBLIC_URL` values are optional overrides instead of required inputs.
 - `orqis init` requires tunnel binaries on `PATH` (`cloudflared` and/or `ngrok`), and supports `ORQIS_CLOUDFLARED_BIN` / `ORQIS_NGROK_BIN` when custom binary paths are needed.
 - Use `--health-timeout-ms <ms>` if startup readiness needs a different timeout window.
+- The web runtime now persists workspace timeline messages in SQLite (`orqis.db`) and serves timeline APIs at `GET/POST /api/workspaces/:workspaceId/messages`.
+- Timeline writes auto-provision workspace/project records when missing, and timeline reads return chronological message history scoped to one workspace.
+- Set `ORQIS_WEB_RUNTIME_DB_PATH` to override the SQLite file path used by the web runtime.
 
 ## First implementation target
 

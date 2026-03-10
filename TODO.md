@@ -86,8 +86,11 @@ Safe to defer while Phase 2 starts:
 - [ ] Build project creation flow in UI
   - Acceptance criteria: user can create/list/select projects and each project resolves to one persistent workspace.
 
-- [ ] Build workspace group chat timeline with persistence
+- [x] Build workspace group chat timeline with persistence
   - Acceptance criteria: messages survive restarts and reload in chronological order per workspace.
+  - Summary: Added a persistent SQLite-backed workspace timeline store with migration bootstrap, chronological per-workspace message queries, and append APIs in the web runtime.
+  - Summary (follow-up): Replaced the landing scaffold with a minimal timeline UI that can post/reload messages through the new workspace timeline endpoints.
+  - Changed: `apps/web/src/index.ts`, `apps/web/src/persistence.ts`, `apps/web/src/node-sqlite.d.ts`, `apps/web/test/runtime.test.ts`, `apps/web/test/timeline-persistence.test.ts`, `TODO.md`.
 
 - [ ] Add basic local session auth
   - Acceptance criteria: protected routes require login and session persistence works across refresh.
