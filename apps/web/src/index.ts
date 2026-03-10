@@ -76,57 +76,690 @@ function getWebAppHtml(): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Orqis Workspace Timeline</title>
+  <title>Orqis Workspace Shell</title>
   <style>
-    :root { color-scheme: light; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif; }
-    body { margin: 0; background: #f3f4f6; color: #111827; }
-    main { max-width: 960px; margin: 0 auto; padding: 1.5rem 1rem 2rem; }
-    h1 { margin-bottom: 0.25rem; }
-    p { margin-top: 0; color: #4b5563; }
-    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 1rem; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
-    .controls { display: grid; gap: 0.75rem; margin-bottom: 1rem; }
-    .row { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); align-items: end; }
-    .project-summary { font-size: 0.88rem; color: #374151; }
-    label { display: grid; gap: 0.35rem; font-size: 0.9rem; color: #374151; }
-    input, select, textarea, button { font: inherit; border-radius: 8px; border: 1px solid #d1d5db; }
-    input, select, textarea { padding: 0.5rem 0.65rem; background: #fff; }
-    textarea { min-height: 90px; resize: vertical; }
-    button { padding: 0.55rem 0.9rem; background: #111827; color: #fff; border: none; cursor: pointer; }
-    button.secondary { background: #4b5563; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-    #status { min-height: 1.25rem; font-size: 0.9rem; color: #1f2937; }
-    #messages { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.75rem; }
-    #messages li { border: 1px solid #e5e7eb; border-radius: 10px; padding: 0.75rem; background: #fafafa; }
-    .meta { font-size: 0.78rem; color: #6b7280; margin-bottom: 0.4rem; }
-    .content { white-space: pre-wrap; word-break: break-word; }
+    :root {
+      color-scheme: dark;
+      --font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+      --rail-bg: #151820;
+      --sidebar-bg: #1f2430;
+      --panel-bg: radial-gradient(circle at top right, #3f4b6f 0%, #323a54 24%, #2a2f3c 55%, #232734 100%);
+      --panel-overlay: rgba(20, 24, 35, 0.52);
+      --panel-border: rgba(255, 255, 255, 0.1);
+      --text-main: #f4f7ff;
+      --text-muted: #9ea8c7;
+      --text-soft: #7f8ab0;
+      --accent: #7ea7ff;
+      --accent-strong: #5f8ef8;
+      --error: #ff8c94;
+      --chip-bg: rgba(126, 167, 255, 0.2);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--font-family);
+      color: var(--text-main);
+      background: linear-gradient(145deg, #0f1320 0%, #111624 42%, #0d111d 100%);
+      overflow: hidden;
+    }
+
+    button, input, select, textarea {
+      font: inherit;
+      color: inherit;
+    }
+
+    .app-shell {
+      display: grid;
+      grid-template-columns: 72px 280px minmax(0, 1fr);
+      height: 100vh;
+      width: 100%;
+    }
+
+    .project-rail {
+      position: relative;
+      background: linear-gradient(180deg, #111520 0%, #171b25 100%);
+      border-right: 1px solid rgba(255, 255, 255, 0.06);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 0.75rem 0.5rem;
+      gap: 0.85rem;
+      overflow: visible;
+    }
+
+    .rail-top,
+    .rail-bottom {
+      display: grid;
+      gap: 0.55rem;
+      justify-items: center;
+    }
+
+    .rail-projects {
+      flex: 1;
+      width: 100%;
+      display: grid;
+      grid-auto-rows: min-content;
+      justify-items: center;
+      gap: 0.5rem;
+      overflow-y: auto;
+      padding: 0.35rem 0;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+    }
+
+    .rail-icon {
+      width: 44px;
+      height: 44px;
+      border: 0;
+      border-radius: 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.88rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      cursor: pointer;
+      transition: transform 120ms ease, border-radius 120ms ease, background 120ms ease, color 120ms ease;
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-main);
+    }
+
+    .rail-icon:hover {
+      transform: translateY(-1px);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.18);
+    }
+
+    .rail-icon[aria-current="true"] {
+      border-radius: 10px;
+      background: linear-gradient(135deg, #89b2ff 0%, #6091ff 100%);
+      color: #101729;
+    }
+
+    .rail-icon--brand {
+      background: linear-gradient(145deg, #90bbff 0%, #6588eb 100%);
+      color: #111827;
+    }
+
+    .rail-icon--ghost {
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(20, 24, 35, 0.55);
+    }
+
+    .rail-empty {
+      font-size: 0.72rem;
+      color: var(--text-soft);
+      text-align: center;
+      line-height: 1.35;
+      padding: 0 0.35rem;
+    }
+
+    .quick-create-popover {
+      position: absolute;
+      left: 76px;
+      bottom: 14px;
+      width: 260px;
+      background: rgba(15, 19, 31, 0.97);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 14px;
+      box-shadow: 0 18px 34px rgba(2, 5, 13, 0.6);
+      padding: 0.85rem;
+      display: grid;
+      gap: 0.55rem;
+      z-index: 20;
+    }
+
+    .quick-create-popover h2 {
+      margin: 0;
+      font-size: 0.92rem;
+    }
+
+    label {
+      display: grid;
+      gap: 0.3rem;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      letter-spacing: 0.02em;
+    }
+
+    input,
+    select,
+    textarea {
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(12, 15, 26, 0.8);
+      color: var(--text-main);
+      padding: 0.52rem 0.62rem;
+      transition: border-color 120ms ease, box-shadow 120ms ease;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus,
+    button:focus-visible {
+      outline: none;
+      border-color: rgba(126, 167, 255, 0.8);
+      box-shadow: 0 0 0 2px rgba(126, 167, 255, 0.24);
+    }
+
+    button {
+      border: 0;
+      border-radius: 10px;
+      cursor: pointer;
+      background: linear-gradient(135deg, #88aeff 0%, #6a93ff 100%);
+      color: #121c33;
+      padding: 0.55rem 0.75rem;
+      font-weight: 600;
+      transition: filter 100ms ease;
+    }
+
+    button:hover {
+      filter: brightness(1.06);
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      filter: none;
+    }
+
+    button.secondary {
+      background: rgba(255, 255, 255, 0.12);
+      color: var(--text-main);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+    }
+
+    .quick-create-actions {
+      display: flex;
+      gap: 0.45rem;
+      margin-top: 0.2rem;
+    }
+
+    .workspace-nav {
+      display: flex;
+      flex-direction: column;
+      background: linear-gradient(180deg, #1d2330 0%, #1d2230 55%, #1a1f2a 100%);
+      border-right: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 1rem 0.9rem 0.9rem;
+      gap: 1rem;
+      overflow: hidden;
+    }
+
+    .workspace-nav-header {
+      display: grid;
+      gap: 0.25rem;
+      padding: 0.15rem 0.25rem 0;
+    }
+
+    .workspace-nav-eyebrow {
+      margin: 0;
+      font-size: 0.68rem;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+      color: var(--text-soft);
+    }
+
+    .workspace-nav-header h1 {
+      margin: 0;
+      font-size: 1.03rem;
+      line-height: 1.25;
+      word-break: break-word;
+    }
+
+    .workspace-nav-header p {
+      margin: 0;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      line-height: 1.35;
+    }
+
+    .workspace-selector label {
+      font-size: 0.73rem;
+    }
+
+    .channel-groups {
+      display: grid;
+      gap: 0.3rem;
+      align-content: start;
+      overflow-y: auto;
+      padding-right: 0.2rem;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+    }
+
+    .channel-group-label {
+      margin: 0.55rem 0 0.2rem;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-soft);
+      padding-left: 0.36rem;
+    }
+
+    .channel-item {
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-muted);
+      border-radius: 9px;
+      padding: 0.45rem 0.58rem;
+      font-size: 0.88rem;
+      font-weight: 500;
+    }
+
+    .channel-item:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-main);
+    }
+
+    .channel-item--thread {
+      font-size: 0.82rem;
+      padding-left: 0.76rem;
+    }
+
+    .channel-item--active {
+      background: linear-gradient(135deg, rgba(126, 167, 255, 0.3) 0%, rgba(126, 167, 255, 0.18) 100%);
+      border-color: rgba(126, 167, 255, 0.52);
+      color: #eaf1ff;
+    }
+
+    .workspace-meta {
+      margin-top: auto;
+      padding: 0.65rem 0.75rem;
+      border-radius: 12px;
+      background: rgba(9, 13, 24, 0.52);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      display: grid;
+      gap: 0.22rem;
+    }
+
+    .workspace-meta span {
+      font-size: 0.68rem;
+      color: var(--text-soft);
+      text-transform: uppercase;
+      letter-spacing: 0.09em;
+    }
+
+    .workspace-meta strong {
+      font-size: 0.8rem;
+      color: var(--text-main);
+      font-weight: 600;
+      word-break: break-all;
+    }
+
+    .panel {
+      min-width: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background: var(--panel-bg);
+      position: relative;
+    }
+
+    .panel::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(11, 16, 28, 0.1) 0%, rgba(10, 13, 22, 0.4) 100%);
+      pointer-events: none;
+    }
+
+    .panel > * {
+      position: relative;
+      z-index: 1;
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 0.9rem;
+      padding: 1rem 1.15rem 0.85rem;
+      border-bottom: 1px solid var(--panel-border);
+      backdrop-filter: blur(6px);
+      background: var(--panel-overlay);
+    }
+
+    .panel-context {
+      margin: 0;
+      font-size: 0.71rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-soft);
+    }
+
+    .panel-header h2 {
+      margin: 0.2rem 0 0.3rem;
+      font-size: 1.25rem;
+      line-height: 1.2;
+    }
+
+    .panel-header p {
+      margin: 0;
+      font-size: 0.86rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+      max-width: 680px;
+    }
+
+    .status {
+      min-height: 2.15rem;
+      margin: 0.8rem 1.15rem 0;
+      padding: 0.6rem 0.75rem;
+      border-radius: 10px;
+      background: rgba(9, 13, 24, 0.46);
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      line-height: 1.35;
+    }
+
+    .status[data-variant="error"] {
+      border-color: rgba(255, 140, 148, 0.48);
+      color: #ffe8ea;
+      background: rgba(52, 18, 23, 0.6);
+    }
+
+    .timeline-region {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0.85rem 1.15rem 1rem;
+      min-height: 0;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+    }
+
+    #messages {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 0.78rem;
+      align-content: start;
+    }
+
+    #messages li {
+      border-radius: 13px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(11, 15, 26, 0.72);
+      padding: 0.72rem 0.8rem;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    }
+
+    #messages li.empty {
+      color: var(--text-muted);
+      font-size: 0.86rem;
+      text-align: center;
+      padding: 1rem;
+    }
+
+    .meta {
+      font-size: 0.74rem;
+      color: var(--text-soft);
+      margin-bottom: 0.42rem;
+      line-height: 1.3;
+      word-break: break-all;
+    }
+
+    .content {
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #f8faff;
+      font-size: 0.93rem;
+      line-height: 1.4;
+    }
+
+    .detail-region {
+      flex: 1;
+      overflow-y: auto;
+      min-height: 0;
+      padding: 1rem 1.15rem;
+    }
+
+    .detail-card {
+      max-width: 760px;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(13, 18, 30, 0.76);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+      padding: 1rem;
+    }
+
+    .detail-card h3 {
+      margin: 0 0 0.45rem;
+      font-size: 1.02rem;
+    }
+
+    .detail-card p {
+      margin: 0;
+      color: var(--text-muted);
+      line-height: 1.45;
+      font-size: 0.88rem;
+    }
+
+    .agent-list {
+      list-style: none;
+      padding: 0;
+      margin: 0.85rem 0 0;
+      display: grid;
+      gap: 0.55rem;
+    }
+
+    .agent-list li {
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(7, 11, 20, 0.5);
+      padding: 0.55rem 0.6rem;
+      display: grid;
+      gap: 0.15rem;
+    }
+
+    .agent-list strong {
+      font-size: 0.86rem;
+    }
+
+    .agent-list span {
+      color: var(--text-muted);
+      font-size: 0.78rem;
+    }
+
+    .composer-shell {
+      border-top: 1px solid var(--panel-border);
+      background: rgba(14, 19, 31, 0.93);
+      backdrop-filter: blur(8px);
+      padding: 0.75rem 1.15rem 0.9rem;
+      display: grid;
+      gap: 0.5rem;
+      position: sticky;
+      bottom: 0;
+      z-index: 3;
+    }
+
+    .composer-topline {
+      display: grid;
+      grid-template-columns: minmax(0, 180px) minmax(0, 1fr);
+      gap: 0.6rem;
+    }
+
+    .composer-message-label {
+      font-size: 0.76rem;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 84px;
+      resize: vertical;
+    }
+
+    .composer-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.45rem;
+    }
+
+    @media (max-width: 1080px) {
+      .app-shell {
+        grid-template-columns: 68px 250px minmax(0, 1fr);
+      }
+
+      .panel-header {
+        padding-inline: 0.95rem;
+      }
+
+      .timeline-region,
+      .detail-region,
+      .composer-shell {
+        padding-left: 0.95rem;
+        padding-right: 0.95rem;
+      }
+    }
+
+    @media (max-width: 860px) {
+      body {
+        overflow: auto;
+      }
+
+      .app-shell {
+        display: block;
+        height: auto;
+      }
+
+      .project-rail {
+        width: 100%;
+        height: auto;
+        padding: 0.65rem;
+        border-right: 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        align-items: center;
+      }
+
+      .rail-top,
+      .rail-bottom {
+        display: flex;
+        gap: 0.45rem;
+      }
+
+      .rail-projects {
+        display: flex;
+        flex-direction: row;
+        overflow-x: auto;
+        overflow-y: hidden;
+        gap: 0.45rem;
+        padding: 0 0.45rem;
+      }
+
+      .quick-create-popover {
+        left: 0.7rem;
+        right: 0.7rem;
+        width: auto;
+        top: calc(100% + 0.55rem);
+        bottom: auto;
+      }
+
+      .workspace-nav {
+        border-right: 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+        max-height: none;
+      }
+
+      .panel {
+        height: auto;
+        min-height: calc(100vh - 240px);
+      }
+
+      .composer-topline {
+        grid-template-columns: 1fr;
+      }
+    }
   </style>
 </head>
 <body>
-  <main>
-    <h1>Orqis workspace timeline</h1>
-    <p>Orqis control center workspace group chat timeline with persistent message history.</p>
-    <section class="card">
-      <div class="controls">
-        <div class="row">
-          <label>Create project
-            <input id="new-project-name" placeholder="Website redesign" />
-          </label>
-          <label>Project description (optional)
-            <input id="new-project-description" placeholder="Internal scope notes" />
-          </label>
-          <div class="actions">
-            <button id="create-project">Create project</button>
-            <button id="refresh-projects" class="secondary">Refresh projects</button>
-          </div>
+  <div class="app-shell">
+    <aside class="project-rail" aria-label="Project rail">
+      <div class="rail-top">
+        <button class="rail-icon rail-icon--brand" id="orqis-home" type="button" title="Orqis control center" aria-label="Orqis control center">
+          OQ
+        </button>
+      </div>
+      <div id="project-rail-list" class="rail-projects" aria-label="Projects"></div>
+      <div class="rail-bottom">
+        <button class="rail-icon rail-icon--ghost" id="open-project-create" type="button" title="Quick create project" aria-label="Quick create project">
+          +
+        </button>
+        <button class="rail-icon rail-icon--ghost" id="refresh-projects" type="button" title="Refresh projects" aria-label="Refresh projects">
+          ↻
+        </button>
+      </div>
+      <div id="quick-create-popover" class="quick-create-popover" hidden>
+        <h2>Quick project</h2>
+        <label>Project name
+          <input id="new-project-name" placeholder="Website redesign" />
+        </label>
+        <label>Description (optional)
+          <input id="new-project-description" placeholder="Internal scope notes" />
+        </label>
+        <div class="quick-create-actions">
+          <button id="create-project" type="button">Create</button>
+          <button id="close-project-create" class="secondary" type="button">Cancel</button>
         </div>
-        <div class="row">
-          <label>Select project
-            <select id="project-select"></select>
-          </label>
-          <div class="project-summary">Workspace: <strong id="selected-workspace">none</strong></div>
+      </div>
+    </aside>
+
+    <aside class="workspace-nav" aria-label="Workspace navigation">
+      <header class="workspace-nav-header">
+        <p class="workspace-nav-eyebrow">Project Workspace</p>
+        <h1 id="selected-project-name">No project selected</h1>
+        <p id="selected-project-slug">Create a project from the left rail to start.</p>
+      </header>
+
+      <div class="workspace-selector">
+        <label for="project-select">Switch project
+          <select id="project-select"></select>
+        </label>
+      </div>
+
+      <nav class="channel-groups" aria-label="Workspace channels">
+        <button class="channel-item channel-item--active" type="button" data-view-id="main-chat" aria-current="true">Main Chat</button>
+        <button class="channel-item" type="button" data-view-id="files" aria-current="false">Files</button>
+        <p class="channel-group-label">Agent Threads</p>
+        <button class="channel-item channel-item--thread" type="button" data-view-id="thread-frontend" aria-current="false">PM -> Frontend Agent</button>
+        <button class="channel-item channel-item--thread" type="button" data-view-id="thread-backend" aria-current="false">PM -> Backend Agent</button>
+        <button class="channel-item channel-item--thread" type="button" data-view-id="thread-reviewer" aria-current="false">PM -> Reviewer</button>
+        <button class="channel-item" type="button" data-view-id="assigned-agents" aria-current="false">Assigned Agents</button>
+      </nav>
+
+      <div class="workspace-meta">
+        <span>Workspace</span>
+        <strong id="selected-workspace">none</strong>
+      </div>
+    </aside>
+
+    <main class="panel">
+      <header class="panel-header">
+        <div>
+          <p id="panel-context" class="panel-context">Channel</p>
+          <h2 id="panel-title">Main Chat</h2>
+          <p id="panel-subtitle">Orqis control center workspace group chat timeline with persistent message history.</p>
         </div>
-        <div class="row">
+        <button id="reload-messages" class="secondary" type="button">Reload timeline</button>
+      </header>
+
+      <section id="status" class="status" role="status"></section>
+
+      <section id="timeline-region" class="timeline-region">
+        <ul id="messages"></ul>
+      </section>
+
+      <section id="detail-region" class="detail-region" hidden></section>
+
+      <footer id="composer-shell" class="composer-shell">
+        <div class="composer-topline">
           <label>Actor type
             <select id="actor-type">
               <option value="user">user</option>
@@ -134,25 +767,38 @@ function getWebAppHtml(): string {
               <option value="system">system</option>
             </select>
           </label>
-          <label>Actor ID (optional) <input id="actor-id" placeholder="pm-agent" /></label>
+          <label>Actor ID (optional)
+            <input id="actor-id" placeholder="pm-agent" />
+          </label>
         </div>
-        <label>Message <textarea id="message-content" placeholder="Post a workspace update..."></textarea></label>
-        <div class="actions">
-          <button id="send-message">Send message</button>
-          <button id="reload-messages" class="secondary">Reload timeline</button>
+        <label class="composer-message-label" for="message-content">Message</label>
+        <textarea id="message-content" placeholder="Post a workspace update..."></textarea>
+        <div class="composer-actions">
+          <button id="send-message" type="button">Send message</button>
         </div>
-        <div id="status"></div>
-      </div>
-      <ul id="messages"></ul>
-    </section>
-  </main>
+      </footer>
+    </main>
+  </div>
   <script type="module">
     const projectNameInput = document.getElementById("new-project-name");
     const projectDescriptionInput = document.getElementById("new-project-description");
     const createProjectButton = document.getElementById("create-project");
+    const closeProjectCreateButton = document.getElementById("close-project-create");
+    const openProjectCreateButton = document.getElementById("open-project-create");
     const refreshProjectsButton = document.getElementById("refresh-projects");
+    const projectRailList = document.getElementById("project-rail-list");
+    const orqisHomeButton = document.getElementById("orqis-home");
+    const quickCreatePopover = document.getElementById("quick-create-popover");
     const projectSelect = document.getElementById("project-select");
+    const selectedProjectName = document.getElementById("selected-project-name");
+    const selectedProjectSlug = document.getElementById("selected-project-slug");
     const selectedWorkspace = document.getElementById("selected-workspace");
+    const panelContext = document.getElementById("panel-context");
+    const panelTitle = document.getElementById("panel-title");
+    const panelSubtitle = document.getElementById("panel-subtitle");
+    const timelineRegion = document.getElementById("timeline-region");
+    const detailRegion = document.getElementById("detail-region");
+    const composerShell = document.getElementById("composer-shell");
     const actorTypeInput = document.getElementById("actor-type");
     const actorIdInput = document.getElementById("actor-id");
     const contentInput = document.getElementById("message-content");
@@ -160,19 +806,66 @@ function getWebAppHtml(): string {
     const reloadButton = document.getElementById("reload-messages");
     const status = document.getElementById("status");
     const messagesList = document.getElementById("messages");
+    const navigationButtons = Array.from(
+      document.querySelectorAll("[data-view-id]"),
+    );
+
     const projectsUrl = "/api/projects";
 
+    const viewMeta = {
+      "main-chat": {
+        context: "Channel",
+        title: "Main Chat",
+        subtitle: "Project-wide chat timeline for planning, execution, and approvals.",
+        timeline: true,
+      },
+      files: {
+        context: "Section",
+        title: "Files",
+        subtitle: "Project files panel placeholder while timeline and task flows are stabilized.",
+        timeline: false,
+      },
+      "thread-frontend": {
+        context: "Agent Thread",
+        title: "PM -> Frontend Agent",
+        subtitle: "UI and client-side implementation coordination thread.",
+        timeline: true,
+      },
+      "thread-backend": {
+        context: "Agent Thread",
+        title: "PM -> Backend Agent",
+        subtitle: "API and orchestration-focused execution thread.",
+        timeline: true,
+      },
+      "thread-reviewer": {
+        context: "Agent Thread",
+        title: "PM -> Reviewer",
+        subtitle: "Validation and quality review thread.",
+        timeline: true,
+      },
+      "assigned-agents": {
+        context: "Section",
+        title: "Assigned Agents",
+        subtitle: "Live ownership roster for the current workspace.",
+        timeline: false,
+      },
+    };
+
     let projects = [];
+    let selectedProjectId = "";
+    let activeViewId = "main-chat";
 
     const setStatus = (message, isError = false) => {
       status.textContent = message;
-      status.style.color = isError ? "#b91c1c" : "#1f2937";
+      status.dataset.variant = isError ? "error" : "info";
     };
 
     const renderMessages = (messages) => {
       messagesList.innerHTML = "";
+
       if (!Array.isArray(messages) || messages.length === 0) {
         const item = document.createElement("li");
+        item.className = "empty";
         item.textContent = "No messages yet for this workspace.";
         messagesList.appendChild(item);
         return;
@@ -205,9 +898,38 @@ function getWebAppHtml(): string {
       }
     };
 
-    const getSelectedProject = () => {
-      const selectedProjectId = projectSelect.value;
+    const renderDetailView = () => {
+      if (activeViewId === "files") {
+        detailRegion.innerHTML =
+          '<div class="detail-card"><h3>Files</h3><p>File navigation is staged for a follow-up slice. Continue collaboration in Main Chat and Agent Threads while this panel remains read-only.</p></div>';
+        return;
+      }
 
+      if (activeViewId === "assigned-agents") {
+        detailRegion.innerHTML =
+          '<div class="detail-card"><h3>Assigned Agents</h3><p>Role routing for this workspace.</p><ul class="agent-list"><li><strong>Project Manager</strong><span>Coordinates plans, assignments, and approvals.</span></li><li><strong>Frontend Agent</strong><span>Owns UI shell and interaction delivery.</span></li><li><strong>Backend Agent</strong><span>Owns API contracts, state transitions, and persistence behavior.</span></li><li><strong>Reviewer</strong><span>Validates correctness, tests, and release readiness.</span></li></ul></div>';
+        return;
+      }
+
+      detailRegion.innerHTML =
+        '<div class="detail-card"><h3>Section</h3><p>Select Main Chat or one of the Agent Threads to continue timeline collaboration.</p></div>';
+    };
+
+    const isTimelineView = (viewId) => {
+      const view = viewMeta[viewId];
+      return view !== undefined && view.timeline === true;
+    };
+
+    const syncNavigationState = () => {
+      for (const button of navigationButtons) {
+        const viewId = button.dataset.viewId;
+        const isActive = viewId === activeViewId;
+        button.classList.toggle("channel-item--active", isActive);
+        button.setAttribute("aria-current", isActive ? "true" : "false");
+      }
+    };
+
+    const getSelectedProject = () => {
       for (const project of projects) {
         if (project.projectId === selectedProjectId) {
           return project;
@@ -217,19 +939,111 @@ function getWebAppHtml(): string {
       return null;
     };
 
-    const updateSelectedProjectState = () => {
-      const selectedProject = getSelectedProject();
+    const getProjectBadge = (projectName) => {
+      const parts = String(projectName)
+        .trim()
+        .split(/\\s+/)
+        .filter((part) => part.length > 0);
 
-      if (selectedProject === null) {
-        selectedWorkspace.textContent = "none";
-        sendButton.disabled = true;
-        reloadButton.disabled = true;
+      if (parts.length === 0) {
+        return "PR";
+      }
+
+      if (parts.length === 1) {
+        return parts[0].slice(0, 2).toUpperCase();
+      }
+
+      return (parts[0][0] + parts[1][0]).toUpperCase();
+    };
+
+    const renderProjectRail = () => {
+      projectRailList.innerHTML = "";
+
+      if (projects.length === 0) {
+        const emptyLabel = document.createElement("p");
+        emptyLabel.className = "rail-empty";
+        emptyLabel.textContent = "No projects";
+        projectRailList.appendChild(emptyLabel);
         return;
       }
 
+      for (const project of projects) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "rail-icon";
+        button.textContent = getProjectBadge(project.projectName);
+        button.title = project.projectName;
+        button.setAttribute("aria-label", "Select " + project.projectName);
+        button.setAttribute(
+          "aria-current",
+          project.projectId === selectedProjectId ? "true" : "false",
+        );
+        button.addEventListener("click", async () => {
+          if (selectedProjectId === project.projectId) {
+            return;
+          }
+
+          selectedProjectId = project.projectId;
+          projectSelect.value = project.projectId;
+          renderProjectRail();
+          updateSelectedProjectState();
+
+          try {
+            if (isTimelineView(activeViewId)) {
+              await reloadTimeline();
+            }
+          } catch (error) {
+            setStatus(error instanceof Error ? error.message : String(error), true);
+          }
+        });
+        projectRailList.appendChild(button);
+      }
+    };
+
+    const applyView = () => {
+      const view = viewMeta[activeViewId] ?? viewMeta["main-chat"];
+
+      panelContext.textContent = view.context;
+      panelTitle.textContent = view.title;
+      panelSubtitle.textContent = view.subtitle;
+      syncNavigationState();
+
+      const showTimeline = view.timeline === true;
+      timelineRegion.hidden = !showTimeline;
+      detailRegion.hidden = showTimeline;
+      composerShell.hidden = !showTimeline;
+
+      if (!showTimeline) {
+        renderDetailView();
+      }
+
+      updateSelectedProjectState();
+    };
+
+    const updateSelectedProjectState = () => {
+      const selectedProject = getSelectedProject();
+      const timelineEnabled = selectedProject !== null && isTimelineView(activeViewId);
+
+      if (selectedProject === null) {
+        selectedProjectName.textContent = "No project selected";
+        selectedProjectSlug.textContent = "Create a project from the left rail to start.";
+        selectedWorkspace.textContent = "none";
+        sendButton.disabled = true;
+        reloadButton.disabled = true;
+        actorTypeInput.disabled = true;
+        actorIdInput.disabled = true;
+        contentInput.disabled = true;
+        return;
+      }
+
+      selectedProjectName.textContent = selectedProject.projectName;
+      selectedProjectSlug.textContent = selectedProject.projectSlug;
       selectedWorkspace.textContent = selectedProject.workspaceId;
-      sendButton.disabled = false;
-      reloadButton.disabled = false;
+      sendButton.disabled = !timelineEnabled;
+      reloadButton.disabled = !timelineEnabled;
+      actorTypeInput.disabled = !timelineEnabled;
+      actorIdInput.disabled = !timelineEnabled;
+      contentInput.disabled = !timelineEnabled;
     };
 
     const timelineUrl = () => {
@@ -243,6 +1057,10 @@ function getWebAppHtml(): string {
     };
 
     const reloadTimeline = async (announce = true) => {
+      if (!isTimelineView(activeViewId)) {
+        return;
+      }
+
       const selectedProject = getSelectedProject();
       const url = timelineUrl();
 
@@ -264,7 +1082,8 @@ function getWebAppHtml(): string {
       renderMessages(payload.messages);
 
       if (announce) {
-        setStatus("Timeline loaded for " + selectedProject.projectName + ".");
+        const view = viewMeta[activeViewId] ?? viewMeta["main-chat"];
+        setStatus(view.title + " loaded for " + selectedProject.projectName + ".");
       }
     };
 
@@ -279,6 +1098,8 @@ function getWebAppHtml(): string {
         option.selected = true;
         projectSelect.appendChild(option);
         projectSelect.disabled = true;
+        selectedProjectId = "";
+        renderProjectRail();
         updateSelectedProjectState();
         renderMessages([]);
         return null;
@@ -295,9 +1116,11 @@ function getWebAppHtml(): string {
       const hasPreferredProject = projects.some(
         (project) => project.projectId === preferredProjectId,
       );
-      projectSelect.value = hasPreferredProject
+      selectedProjectId = hasPreferredProject
         ? preferredProjectId
         : projects[0].projectId;
+      projectSelect.value = selectedProjectId;
+      renderProjectRail();
       updateSelectedProjectState();
       return getSelectedProject();
     };
@@ -318,8 +1141,19 @@ function getWebAppHtml(): string {
         return false;
       }
 
-      await reloadTimeline(false);
+      if (isTimelineView(activeViewId)) {
+        await reloadTimeline(false);
+      }
+
       return true;
+    };
+
+    const toggleQuickCreatePopover = (open) => {
+      quickCreatePopover.hidden = !open;
+
+      if (open) {
+        projectNameInput.focus();
+      }
     };
 
     const createProject = async () => {
@@ -348,11 +1182,17 @@ function getWebAppHtml(): string {
 
       projectNameInput.value = "";
       projectDescriptionInput.value = "";
+      toggleQuickCreatePopover(false);
       await loadProjects(payload.project?.projectId);
-      setStatus("Project created.");
+      setStatus("Project created and selected.");
     };
 
     const sendMessage = async () => {
+      if (!isTimelineView(activeViewId)) {
+        setStatus("Switch to Main Chat or an Agent Thread to send timeline messages.", true);
+        return;
+      }
+
       const selectedProject = getSelectedProject();
       const url = timelineUrl();
 
@@ -383,6 +1223,43 @@ function getWebAppHtml(): string {
       setStatus("Message stored.");
     };
 
+    const setActiveView = async (viewId) => {
+      if (viewMeta[viewId] === undefined || activeViewId === viewId) {
+        return;
+      }
+
+      activeViewId = viewId;
+      applyView();
+
+      if (isTimelineView(activeViewId)) {
+        await reloadTimeline();
+        return;
+      }
+
+      const selectedProject = getSelectedProject();
+      if (selectedProject === null) {
+        setStatus("Create and select a project to use workspace sections.");
+      } else {
+        setStatus((viewMeta[activeViewId] ?? viewMeta["main-chat"]).title + " selected.");
+      }
+    };
+
+    openProjectCreateButton.addEventListener("click", () => {
+      toggleQuickCreatePopover(quickCreatePopover.hidden);
+    });
+
+    closeProjectCreateButton.addEventListener("click", () => {
+      toggleQuickCreatePopover(false);
+    });
+
+    orqisHomeButton.addEventListener("click", async () => {
+      try {
+        await setActiveView("main-chat");
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : String(error), true);
+      }
+    });
+
     createProjectButton.addEventListener("click", async () => {
       try {
         await createProject();
@@ -406,8 +1283,16 @@ function getWebAppHtml(): string {
 
     projectSelect.addEventListener("change", async () => {
       try {
+        selectedProjectId = projectSelect.value;
+        renderProjectRail();
         updateSelectedProjectState();
-        await reloadTimeline();
+
+        if (isTimelineView(activeViewId)) {
+          await reloadTimeline();
+          return;
+        }
+
+        setStatus("Project selected.");
       } catch (error) {
         setStatus(error instanceof Error ? error.message : String(error), true);
       }
@@ -428,6 +1313,30 @@ function getWebAppHtml(): string {
         setStatus(error instanceof Error ? error.message : String(error), true);
       }
     });
+
+    for (const button of navigationButtons) {
+      button.addEventListener("click", async () => {
+        const viewId = button.dataset.viewId;
+
+        if (viewId === undefined) {
+          return;
+        }
+
+        try {
+          await setActiveView(viewId);
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : String(error), true);
+        }
+      });
+    }
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        toggleQuickCreatePopover(false);
+      }
+    });
+
+    applyView();
 
     void loadProjects()
       .then((hasProjects) => {
