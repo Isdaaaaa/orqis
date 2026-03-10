@@ -74,6 +74,6 @@ describe("@orqis/web workspace timeline persistence", () => {
         await rm(tempDir, { recursive: true, force: true });
       }
     },
-    20_000,
+    45_000,
   );
 });

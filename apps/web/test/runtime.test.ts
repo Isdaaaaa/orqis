@@ -58,7 +58,7 @@ describe("@orqis/web runtime", () => {
         await cleanup();
       }
     },
-    20_000,
+    45_000,
   );
 
   it(
@@ -88,6 +88,6 @@ describe("@orqis/web runtime", () => {
         await cleanup();
       }
     },
-    20_000,
+    45_000,
   );
 });

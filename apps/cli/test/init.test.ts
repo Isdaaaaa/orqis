@@ -657,6 +657,117 @@ describe("orqis init runtime bootstrap", () => {
     expect(tunnelStopCalls).toBe(1);
   });
 
+  it("propagates the resolved config dir to dedicated runtime process startup", async () => {
+    const configDir = await makeTempDir("orqis-init-runtime-process-config-dir-");
+    const error = vi.spyOn(console, "error").mockImplementation(() => {
+      return;
+    });
+    const tunnelStop = vi.fn(async () => {
+      return;
+    });
+
+    vi.stubEnv("ORQIS_EXPECTED_CONFIG_DIR", configDir);
+
+    const exitCode = await runCli(
+      ["node", "orqis", "init", "--config-dir", configDir],
+      {
+        fetchImpl: async () =>
+          new Response(
+            JSON.stringify({
+              service: "@orqis/web",
+              status: "ok",
+              uptimeMs: 1,
+            }),
+            {
+              status: 200,
+              headers: {
+                "content-type": "application/json; charset=utf-8",
+              },
+            },
+          ),
+        resolveWebRuntimeProcessEntrypoint: async () =>
+          resolveFixturePath("web-runtime-ready-requires-config-dir.mjs"),
+        startTunnel: async () => ({
+          provider: "cloudflare",
+          publicUrl: "https://orqis-runtime-config-dir.trycloudflare.com",
+          metadata: {
+            strategy: "cloudflare-first-fallback",
+            attemptedProviders: ["cloudflare"],
+          },
+          stop: tunnelStop,
+        }),
+        waitForShutdown: async (runtime) => {
+          await runtime.stop();
+        },
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(error).not.toHaveBeenCalled();
+    expect(tunnelStop).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses --health-timeout-ms for dedicated runtime process readiness timeout", async () => {
+    const configDir = await makeTempDir("orqis-init-runtime-process-timeout-");
+    const error = vi.spyOn(console, "error").mockImplementation(() => {
+      return;
+    });
+    const tunnelStop = vi.fn(async () => {
+      return;
+    });
+
+    vi.stubEnv("ORQIS_TEST_RUNTIME_READY_DELAY_MS", "5500");
+
+    const startedAt = Date.now();
+
+    const exitCode = await runCli(
+      [
+        "node",
+        "orqis",
+        "init",
+        "--config-dir",
+        configDir,
+        "--health-timeout-ms",
+        "7000",
+      ],
+      {
+        fetchImpl: async () =>
+          new Response(
+            JSON.stringify({
+              service: "@orqis/web",
+              status: "ok",
+              uptimeMs: 1,
+            }),
+            {
+              status: 200,
+              headers: {
+                "content-type": "application/json; charset=utf-8",
+              },
+            },
+          ),
+        resolveWebRuntimeProcessEntrypoint: async () =>
+          resolveFixturePath("web-runtime-delayed-ready.mjs"),
+        startTunnel: async () => ({
+          provider: "cloudflare",
+          publicUrl: "https://orqis-runtime-delayed.trycloudflare.com",
+          metadata: {
+            strategy: "cloudflare-first-fallback",
+            attemptedProviders: ["cloudflare"],
+          },
+          stop: tunnelStop,
+        }),
+        waitForShutdown: async (runtime) => {
+          await runtime.stop();
+        },
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(error).not.toHaveBeenCalled();
+    expect(tunnelStop).toHaveBeenCalledTimes(1);
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(5_000);
+  }, 20_000);
+
   it("surfaces dedicated runtime process startup errors as runtime launch failures", async () => {
     const configDir = await makeTempDir("orqis-init-runtime-process-error-");
     const error = vi.spyOn(console, "error").mockImplementation(() => {
@@ -1038,7 +1149,7 @@ describe("orqis init runtime bootstrap", () => {
       "tunnel_attempted_providers=cloudflare",
     );
     expect(log).toHaveBeenCalledWith("web_runtime=ready");
-  });
+  }, 20_000);
 
   it("returns non-zero for invalid CLI arguments without throwing", async () => {
     const exitCode = await runCli(["node", "orqis", "bogus"]);

@@ -126,6 +126,12 @@ Safe to defer while Phase 2 starts:
   - Summary (follow-up): Added `sqlite:doctor`/`sqlite:bootstrap` recovery scripts, startup preflight validation, and concise README recovery steps for missing native bindings.
   - Changed: `apps/web/src/persistence.ts`, `apps/web/src/node-sqlite.d.ts` (removed), `apps/web/scripts/sqlite-doctor.mjs`, `apps/web/scripts/sqlite-bootstrap.mjs`, `apps/web/package.json`, `package.json`, `README.md`, `pnpm-lock.yaml`, `TODO.md`.
 
+- [x] Fix dedicated runtime-process persistence path and startup timeout regressions
+  - Summary: Propagated the resolved `--config-dir` into dedicated runtime-process startup so SQLite defaults stay scoped to the active Orqis config directory instead of falling back to `~/.orqis`.
+  - Summary (follow-up): Aligned dedicated runtime-process readiness timeout with the effective `--health-timeout-ms` and raised the default timeout window to absorb first-run SQLite migration startup cost.
+  - Summary (follow-up): Added regression fixtures/tests for config-dir propagation and runtime-process delayed-ready timeout behavior, then widened web runtime/persistence test timeouts to reduce false failures under worker contention.
+  - Changed: `apps/cli/src/cli.ts`, `apps/cli/test/init.test.ts`, `apps/cli/test/fixtures/web-runtime-ready-requires-config-dir.mjs`, `apps/cli/test/fixtures/web-runtime-delayed-ready.mjs`, `apps/web/test/runtime.test.ts`, `apps/web/test/timeline-persistence.test.ts`, `README.md`, `TODO.md`.
+
 #### Hardening before Phase 3
 
 Must finish before Phase 3:
