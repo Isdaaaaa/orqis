@@ -84,6 +84,23 @@ Review whether a change is actually ready to merge.
   - `Move to later phase`
     unless they were already classified by planning or roadmap triage
 
+## Fresh review rule
+
+Treat every review as a fresh review of the current branch, diff, or task state.
+
+Do not assume earlier implementation choices were correct just because they were made in this conversation.
+Do not protect prior decisions out of momentum or familiarity.
+Judge the current work only by:
+
+- acceptance criteria
+- correctness
+- regressions
+- scope control
+- architecture fit for the current slice
+
+If prior conversation context conflicts with the actual code, diff, TODO, or docs, trust the current repo state over prior assumptions.
+Default to re-evaluating the task from the current repo state, not from the reasoning path used to build it.
+
 ## Classification standard
 
 ### Blocking now

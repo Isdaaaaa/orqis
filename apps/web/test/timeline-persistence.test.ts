@@ -76,4 +76,66 @@ describe("@orqis/web workspace timeline persistence", () => {
     },
     45_000,
   );
+
+  it(
+    "creates projects with one persistent workspace mapping and unique slugs",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "orqis-web-projects-"));
+      const databaseFilePath = join(tempDir, "projects.db");
+
+      const firstStore = createWorkspaceTimelineStore({
+        databaseFilePath,
+      });
+
+      let firstProjectId = "";
+      let secondProjectId = "";
+
+      try {
+        const firstProject = firstStore.createProject({
+          name: "Website Redesign",
+          description: "MVP project scope",
+        });
+        const secondProject = firstStore.createProject({
+          name: "Website Redesign",
+        });
+        const listedProjects = firstStore.listProjects();
+
+        firstProjectId = firstProject.projectId;
+        secondProjectId = secondProject.projectId;
+
+        expect(firstProject.workspaceId).not.toBe(secondProject.workspaceId);
+        expect(firstProject.projectSlug).toBe("website-redesign");
+        expect(secondProject.projectSlug).toBe("website-redesign-2");
+        expect(firstProject.projectDescription).toBe("MVP project scope");
+        expect(secondProject.projectDescription).toBeNull();
+        expect(listedProjects).toHaveLength(2);
+        expect(listedProjects.map((project) => project.projectId)).toEqual([
+          firstProject.projectId,
+          secondProject.projectId,
+        ]);
+      } finally {
+        firstStore.close();
+      }
+
+      const secondStore = createWorkspaceTimelineStore({
+        databaseFilePath,
+      });
+
+      try {
+        const listedProjects = secondStore.listProjects();
+
+        expect(listedProjects).toHaveLength(2);
+        expect(listedProjects.map((project) => project.projectId)).toContain(
+          firstProjectId,
+        );
+        expect(listedProjects.map((project) => project.projectId)).toContain(
+          secondProjectId,
+        );
+      } finally {
+        secondStore.close();
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+    45_000,
+  );
 });
