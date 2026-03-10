@@ -72,6 +72,8 @@ Common commands:
 - `pnpm -r test`
 - `pnpm -r typecheck`
 - `pnpm orqis:init` (runs the built local CLI; global `orqis` install is not required yet)
+- `pnpm run orqis:web:sqlite:doctor` (checks whether `better-sqlite3` native bindings can load)
+- `pnpm run orqis:web:sqlite:bootstrap` (rebuilds `better-sqlite3` and runs the doctor check)
 
 Current runtime behavior:
 
@@ -84,6 +86,12 @@ Current runtime behavior:
 - The web runtime now persists workspace timeline messages in SQLite (`orqis.db`) and serves timeline APIs at `GET/POST /api/workspaces/:workspaceId/messages`.
 - Timeline writes auto-provision workspace/project records when missing, and timeline reads return chronological message history scoped to one workspace.
 - Set `ORQIS_WEB_RUNTIME_DB_PATH` to override the SQLite file path used by the web runtime.
+- Web runtime startup now preflights `better-sqlite3` bindings and returns recovery commands when bindings are unavailable.
+
+SQLite binding recovery:
+
+- If startup reports unavailable `better-sqlite3` bindings, run `pnpm install` first.
+- Then run `pnpm run orqis:web:sqlite:bootstrap` and retry `pnpm orqis:init`.
 
 ## First implementation target
 

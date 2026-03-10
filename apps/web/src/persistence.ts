@@ -14,6 +14,18 @@ const DEFAULT_ORQIS_CONFIG_DIR = ".orqis";
 const DEFAULT_ORQIS_DB_FILE_NAME = "orqis.db";
 const PROJECTS_TABLE_NAME = "projects";
 const DB_INITIAL_MIGRATION_FILE = "0001_project_workspace_schema.sql";
+const SQLITE_NATIVE_BINDING_UNAVAILABLE_ERROR_CODE =
+  "ERR_ORQIS_SQLITE_BINDINGS_UNAVAILABLE";
+const SQLITE_NATIVE_BINDING_RECOVERY_COMMANDS = [
+  "pnpm install",
+  "pnpm run orqis:web:sqlite:bootstrap",
+  "pnpm run orqis:web:sqlite:doctor",
+] as const;
+const SQLITE_NATIVE_BINDING_ERROR_PATTERNS = [
+  "Could not locate the bindings file",
+  "No native build was found for",
+  "node-v",
+] as const;
 
 const WORKSPACE_MESSAGE_ACTOR_TYPES = ["user", "agent", "system"] as const;
 
@@ -62,6 +74,9 @@ class WorkspaceTimelineError extends Error {
 
 export class WorkspaceTimelineValidationError extends WorkspaceTimelineError {}
 export class WorkspaceTimelineConflictError extends WorkspaceTimelineError {}
+export class WorkspaceTimelineDependencyError extends WorkspaceTimelineError {
+  readonly code = SQLITE_NATIVE_BINDING_UNAVAILABLE_ERROR_CODE;
+}
 
 interface WorkspaceProjectRow {
   readonly projectId: string;
@@ -113,6 +128,10 @@ function isWorkspaceMessageActorType(
 }
 
 function mapSqliteError(error: unknown): WorkspaceTimelineError {
+  if (error instanceof WorkspaceTimelineError) {
+    return error;
+  }
+
   if (!(error instanceof Error)) {
     return new WorkspaceTimelineError(String(error));
   }
@@ -133,6 +152,62 @@ function mapSqliteError(error: unknown): WorkspaceTimelineError {
   }
 
   return new WorkspaceTimelineError(error.message);
+}
+
+function isSqliteNativeBindingUnavailableError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return SQLITE_NATIVE_BINDING_ERROR_PATTERNS.some((pattern) =>
+    error.message.includes(pattern),
+  );
+}
+
+function createSqliteNativeBindingUnavailableError(
+  error: unknown,
+): WorkspaceTimelineDependencyError {
+  const originalMessage =
+    error instanceof Error ? error.message : String(error);
+  const recoverySteps = SQLITE_NATIVE_BINDING_RECOVERY_COMMANDS.map(
+    (command, index) => `  ${index + 1}. ${command}`,
+  ).join("\n");
+
+  return new WorkspaceTimelineDependencyError(
+    [
+      "better-sqlite3 native bindings are unavailable, so the workspace timeline runtime cannot start.",
+      "Recovery:",
+      recoverySteps,
+      `Original error: ${originalMessage}`,
+    ].join("\n"),
+  );
+}
+
+type SqliteRuntimeProbe = () => void;
+
+function runDefaultSqliteRuntimeProbe(): void {
+  const database = new BetterSqlite3(":memory:");
+
+  try {
+    database.pragma("foreign_keys = ON");
+    database.prepare("SELECT 1 AS ok").get();
+  } finally {
+    database.close();
+  }
+}
+
+export function validateWorkspaceTimelinePersistenceRuntime(
+  probe: SqliteRuntimeProbe = runDefaultSqliteRuntimeProbe,
+): void {
+  try {
+    probe();
+  } catch (error) {
+    if (isSqliteNativeBindingUnavailableError(error)) {
+      throw createSqliteNativeBindingUnavailableError(error);
+    }
+
+    throw error;
+  }
 }
 
 function resolveDbMigrationFilePath(moduleUrl = import.meta.url): string {
@@ -220,15 +295,36 @@ function createWorkspaceName(workspaceId: string): string {
   return `Workspace ${workspaceId}`;
 }
 
+function createWorkspaceTimelineDatabase(
+  databaseFilePath: string,
+): SqliteDatabaseSync {
+  validateWorkspaceTimelinePersistenceRuntime();
+
+  let database: SqliteDatabaseSync | undefined;
+
+  try {
+    database = new BetterSqlite3(databaseFilePath);
+    database.pragma("foreign_keys = ON");
+    applySchemaMigrations(database);
+    return database;
+  } catch (error) {
+    database?.close();
+
+    if (isSqliteNativeBindingUnavailableError(error)) {
+      throw createSqliteNativeBindingUnavailableError(error);
+    }
+
+    throw error;
+  }
+}
+
 class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
   private readonly database: SqliteDatabaseSync;
   private closed = false;
 
   constructor(readonly databaseFilePath: string) {
     mkdirSync(dirname(databaseFilePath), { recursive: true });
-    this.database = new BetterSqlite3(databaseFilePath);
-    this.database.pragma("foreign_keys = ON");
-    applySchemaMigrations(this.database);
+    this.database = createWorkspaceTimelineDatabase(databaseFilePath);
   }
 
   listWorkspaceMessages(workspaceId: string): WorkspaceTimelineMessage[] {

@@ -123,7 +123,8 @@ Safe to defer while Phase 2 starts:
 
 - [x] Restore web timeline persistence compatibility with Node 20 baseline
   - Summary: Replaced runtime usage of `node:sqlite` with `better-sqlite3` so workspace timeline persistence runs on the existing Node 20 engine/CI baseline without changing version requirements.
-  - Changed: `apps/web/src/persistence.ts`, `apps/web/src/node-sqlite.d.ts` (removed), `apps/web/package.json`, `pnpm-lock.yaml`, `TODO.md`.
+  - Summary (follow-up): Added `sqlite:doctor`/`sqlite:bootstrap` recovery scripts, startup preflight validation, and concise README recovery steps for missing native bindings.
+  - Changed: `apps/web/src/persistence.ts`, `apps/web/src/node-sqlite.d.ts` (removed), `apps/web/scripts/sqlite-doctor.mjs`, `apps/web/scripts/sqlite-bootstrap.mjs`, `apps/web/package.json`, `package.json`, `README.md`, `pnpm-lock.yaml`, `TODO.md`.
 
 #### Hardening before Phase 3
 
