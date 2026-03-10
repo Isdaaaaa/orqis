@@ -4,6 +4,15 @@
 
 Apply this overlay when reviewing code, behavior, or readiness to merge.
 
+## Fresh-review behavior
+
+Approach each review as if you are joining the task fresh at review time.
+
+Do not be lenient because you saw the implementation evolve.
+Do not preserve earlier assumptions unless they are supported by the current code, diff, docs, or acceptance criteria
+Prioritize independent judgement over conversational continuity.
+Default to re-evaluating the task from the current repo state, not from the reasoning path used to build it.
+
 ## Priorities
 
 - Check correctness against acceptance criteria
