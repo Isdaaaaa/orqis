@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Continue Phase 2 by implementing project creation flow in UI.
+Continue Phase 2 by adding basic local session auth.
 
 ## Completed
 
@@ -83,8 +83,10 @@ Safe to defer while Phase 2 starts:
   - Summary (follow-up): Added migration-contract tests that validate lifecycle/lock fields, approval statuses, correlation indexes, and audit append-only triggers.
   - Changed: `packages/db/src/schema.ts`, `packages/db/migrations/0001_project_workspace_schema.sql`, `packages/db/src/migrations.ts`, `packages/db/src/index.ts`, `packages/db/test/migrations.test.ts`, `packages/db/test/scaffold.test.ts`, `packages/db/package.json`, `pnpm-lock.yaml`, `TODO.md`.
 
-- [ ] Build project creation flow in UI
+- [x] Build project creation flow in UI
   - Acceptance criteria: user can create/list/select projects and each project resolves to one persistent workspace.
+  - Summary: Added persisted project create/list APIs plus a project-first timeline UI flow that supports creating projects, selecting active projects, and posting timeline messages through the mapped workspace.
+  - Changed: `apps/web/src/index.ts`, `apps/web/src/persistence.ts`, `apps/web/test/runtime.test.ts`, `apps/web/test/timeline-persistence.test.ts`, `TODO.md`.
 
 - [x] Build workspace group chat timeline with persistence
   - Acceptance criteria: messages survive restarts and reload in chronological order per workspace.

@@ -50,6 +50,20 @@ export interface AppendWorkspaceTimelineMessageInput {
   readonly content: string;
 }
 
+export interface ProjectWorkspaceSummary {
+  readonly projectId: string;
+  readonly projectSlug: string;
+  readonly projectName: string;
+  readonly projectDescription: string | null;
+  readonly workspaceId: string;
+  readonly workspaceName: string;
+}
+
+export interface CreateProjectInput {
+  readonly name: string;
+  readonly description?: string;
+}
+
 export interface WorkspaceTimelineStoreOptions {
   readonly databaseFilePath?: string;
   readonly configDir?: string;
@@ -58,6 +72,8 @@ export interface WorkspaceTimelineStoreOptions {
 
 export interface WorkspaceTimelineStore {
   readonly databaseFilePath: string;
+  listProjects(): ProjectWorkspaceSummary[];
+  createProject(input: CreateProjectInput): ProjectWorkspaceSummary;
   listWorkspaceMessages(workspaceId: string): WorkspaceTimelineMessage[];
   appendWorkspaceMessage(
     input: AppendWorkspaceTimelineMessageInput,
@@ -98,6 +114,15 @@ interface WorkspaceMessageRow {
   readonly actorId: string | null;
   readonly content: string;
   readonly createdAt: string;
+}
+
+interface ProjectWorkspaceRow {
+  readonly projectId: string;
+  readonly projectSlug: string;
+  readonly projectName: string;
+  readonly projectDescription: string | null;
+  readonly workspaceId: string;
+  readonly workspaceName: string;
 }
 
 function normalizeOptionalString(value: unknown): string | undefined {
@@ -295,6 +320,19 @@ function createWorkspaceName(workspaceId: string): string {
   return `Workspace ${workspaceId}`;
 }
 
+function createWorkspaceNameForProject(projectName: string): string {
+  return `${projectName} workspace`;
+}
+
+function createProjectSlug(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return slug.length > 0 ? slug : "project";
+}
+
 function createWorkspaceTimelineDatabase(
   databaseFilePath: string,
 ): SqliteDatabaseSync {
@@ -325,6 +363,77 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
   constructor(readonly databaseFilePath: string) {
     mkdirSync(dirname(databaseFilePath), { recursive: true });
     this.database = createWorkspaceTimelineDatabase(databaseFilePath);
+  }
+
+  listProjects(): ProjectWorkspaceSummary[] {
+    const rows = this.database
+      .prepare(
+        [
+          "SELECT",
+          "  projects.id AS projectId,",
+          "  projects.slug AS projectSlug,",
+          "  projects.name AS projectName,",
+          "  projects.description AS projectDescription,",
+          "  workspaces.id AS workspaceId,",
+          "  workspaces.name AS workspaceName",
+          "FROM projects",
+          "JOIN workspaces ON workspaces.project_id = projects.id",
+          "ORDER BY projects.created_at ASC, projects.rowid ASC",
+        ].join("\n"),
+      )
+      .all() as ProjectWorkspaceRow[];
+
+    return rows.map((row) => ({
+      projectId: row.projectId,
+      projectSlug: row.projectSlug,
+      projectName: row.projectName,
+      projectDescription: row.projectDescription,
+      workspaceId: row.workspaceId,
+      workspaceName: row.workspaceName,
+    }));
+  }
+
+  createProject(input: CreateProjectInput): ProjectWorkspaceSummary {
+    const projectName = normalizeRequiredString(input.name, "name");
+    const projectDescription = normalizeOptionalString(input.description) ?? null;
+
+    let transactionStarted = false;
+
+    try {
+      this.database.exec("BEGIN IMMEDIATE");
+      transactionStarted = true;
+
+      const projectSlug = this.resolveUniqueProjectSlug(createProjectSlug(projectName));
+      const projectId = randomUUID();
+      const workspaceId = `workspace-${projectId}`;
+      const workspaceName = createWorkspaceNameForProject(projectName);
+
+      this.database
+        .prepare("INSERT INTO projects (id, slug, name, description) VALUES (?, ?, ?, ?)")
+        .run(projectId, projectSlug, projectName, projectDescription);
+
+      this.database
+        .prepare("INSERT INTO workspaces (id, project_id, name) VALUES (?, ?, ?)")
+        .run(workspaceId, projectId, workspaceName);
+
+      this.database.exec("COMMIT");
+      transactionStarted = false;
+
+      return {
+        projectId,
+        projectSlug,
+        projectName,
+        projectDescription,
+        workspaceId,
+        workspaceName,
+      };
+    } catch (error) {
+      if (transactionStarted) {
+        this.database.exec("ROLLBACK");
+      }
+
+      throw mapSqliteError(error);
+    }
   }
 
   listWorkspaceMessages(workspaceId: string): WorkspaceTimelineMessage[] {
@@ -492,6 +601,26 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
       .run(workspaceId, resolvedProjectId, createWorkspaceName(workspaceId));
 
     return resolvedProjectId;
+  }
+
+  private resolveUniqueProjectSlug(baseSlug: string): string {
+    let slug = baseSlug;
+    let suffix = 2;
+
+    while (this.projectSlugExists(slug)) {
+      slug = `${baseSlug}-${suffix}`;
+      suffix += 1;
+    }
+
+    return slug;
+  }
+
+  private projectSlugExists(slug: string): boolean {
+    const existingProject = this.database
+      .prepare("SELECT id FROM projects WHERE slug = ? LIMIT 1")
+      .get(slug) as ProjectIdRow | undefined;
+
+    return existingProject !== undefined;
   }
 }
 
