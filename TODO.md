@@ -121,6 +121,10 @@ Safe to defer while Phase 2 starts:
   - Summary (follow-up): Kept parent-delete nulling semantics while adding regression coverage for cross-project parent-link rejection.
   - Changed: `packages/db/src/schema.ts`, `packages/db/migrations/0001_project_workspace_schema.sql`, `packages/db/test/migrations.test.ts`, `TODO.md`.
 
+- [x] Restore web timeline persistence compatibility with Node 20 baseline
+  - Summary: Replaced runtime usage of `node:sqlite` with `better-sqlite3` so workspace timeline persistence runs on the existing Node 20 engine/CI baseline without changing version requirements.
+  - Changed: `apps/web/src/persistence.ts`, `apps/web/src/node-sqlite.d.ts` (removed), `apps/web/package.json`, `pnpm-lock.yaml`, `TODO.md`.
+
 #### Hardening before Phase 3
 
 Must finish before Phase 3:
@@ -131,6 +135,8 @@ Must finish before Phase 3:
 Unclassified:
 - [ ] Add migration regression coverage for `messages`/`tasks`/`approvals` update-path guards so same-project/workspace linked ref triggers are verified on updates, not only inserts
 - [ ] Add migration regression coverage proving `parent_task_id` and `parent_message_id` are nulled on parent delete after composite lineage constraints
+- [ ] Add web-runtime API regression coverage for `GET/POST /api/workspaces/:workspaceId/messages` (validation errors, project/workspace conflict responses, and chronological payload ordering)
+- [ ] Harden web-runtime shutdown to close keep-alive connections promptly so `runtime.stop()` does not block for multi-second idle timeouts after request traffic
 
 Move to later phase:
 - [ ] Add query helpers for issue/task-centric run history so timeline and run drill-down share one contract (Phase 4 timeline/read-model hardening)

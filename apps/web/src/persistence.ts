@@ -1,15 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const require = createRequire(import.meta.url);
-const SQLITE_MODULE_ID = "node:sqlite";
-type SqliteModule = typeof import("node:sqlite");
-type SqliteDatabaseSync = import("node:sqlite").DatabaseSync;
-const { DatabaseSync } = require(SQLITE_MODULE_ID) as SqliteModule;
+import BetterSqlite3 from "better-sqlite3";
+
+type SqliteDatabaseSync = InstanceType<typeof BetterSqlite3>;
 
 const ORQIS_CONFIG_DIR_ENV_VAR = "ORQIS_CONFIG_DIR";
 export const ORQIS_WEB_RUNTIME_DB_PATH_ENV_VAR = "ORQIS_WEB_RUNTIME_DB_PATH";
@@ -163,7 +160,7 @@ function hasSchemaTables(database: SqliteDatabaseSync): boolean {
     .prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
     )
-    .get<{ name: string }>(PROJECTS_TABLE_NAME);
+    .get(PROJECTS_TABLE_NAME) as { name: string } | undefined;
 
   return row !== undefined;
 }
@@ -229,8 +226,8 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
 
   constructor(readonly databaseFilePath: string) {
     mkdirSync(dirname(databaseFilePath), { recursive: true });
-    this.database = new DatabaseSync(databaseFilePath);
-    this.database.exec("PRAGMA foreign_keys = ON;");
+    this.database = new BetterSqlite3(databaseFilePath);
+    this.database.pragma("foreign_keys = ON");
     applySchemaMigrations(this.database);
   }
 
@@ -256,7 +253,7 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
           "ORDER BY created_at ASC, rowid ASC",
         ].join("\n"),
       )
-      .all<WorkspaceMessageRow>(normalizedWorkspaceId);
+      .all(normalizedWorkspaceId) as WorkspaceMessageRow[];
 
     return rows.map((row) => ({
       id: row.id,
@@ -350,7 +347,7 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
   ): string {
     const existingWorkspace = this.database
       .prepare("SELECT project_id AS projectId FROM workspaces WHERE id = ?")
-      .get<WorkspaceProjectRow>(workspaceId);
+      .get(workspaceId) as WorkspaceProjectRow | undefined;
 
     if (existingWorkspace !== undefined) {
       if (
@@ -369,7 +366,7 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
 
     const existingWorkspaceForProject = this.database
       .prepare("SELECT id FROM workspaces WHERE project_id = ?")
-      .get<WorkspaceIdRow>(resolvedProjectId);
+      .get(resolvedProjectId) as WorkspaceIdRow | undefined;
 
     if (
       existingWorkspaceForProject !== undefined &&
@@ -382,7 +379,7 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
 
     const existingProject = this.database
       .prepare("SELECT id FROM projects WHERE id = ?")
-      .get<ProjectIdRow>(resolvedProjectId);
+      .get(resolvedProjectId) as ProjectIdRow | undefined;
 
     if (existingProject === undefined) {
       this.database
