@@ -20,9 +20,61 @@ async function createRuntimeDatabaseFilePath(): Promise<{
   };
 }
 
+function resolveSessionCookieValue(setCookieHeader: string | null): string {
+  if (setCookieHeader === null || setCookieHeader.length === 0) {
+    throw new Error("expected set-cookie header for session creation response");
+  }
+
+  const [cookie] = setCookieHeader.split(";");
+
+  if (cookie === undefined || cookie.length === 0) {
+    throw new Error("session cookie header did not include a cookie value");
+  }
+
+  return cookie;
+}
+
+async function createSessionCookie(
+  baseUrl: string,
+  actorId: string,
+): Promise<string> {
+  const createSessionResponse = await fetch(`${baseUrl}/api/session`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      actorId,
+    }),
+  });
+  const createSessionBody = (await createSessionResponse.json()) as {
+    authenticated?: boolean;
+    session?: {
+      actorId?: string;
+    };
+    error?: string;
+  };
+
+  expect(createSessionResponse.status).toBe(201);
+  expect(createSessionBody.authenticated).toBe(true);
+  expect(createSessionBody.session?.actorId).toBe(actorId);
+
+  return resolveSessionCookieValue(createSessionResponse.headers.get("set-cookie"));
+}
+
+function withSessionCookie(
+  sessionCookie: string,
+  headers: Record<string, string> = {},
+): Record<string, string> {
+  return {
+    ...headers,
+    cookie: sessionCookie,
+  };
+}
+
 describe("@orqis/web runtime", () => {
   it(
-    "serves a health endpoint and landing page",
+    "serves a health endpoint and enforces local session auth before loading the workspace shell",
     async () => {
       const { databaseFilePath, cleanup } = await createRuntimeDatabaseFilePath();
       const runtime = await startOrqisWebRuntime({
@@ -48,18 +100,63 @@ describe("@orqis/web runtime", () => {
         });
         expect(health.uptimeMs).toBeTypeOf("number");
 
-        const landingResponse = await fetch(runtime.baseUrl);
-        const landingPage = await landingResponse.text();
+        const unauthorizedLandingResponse = await fetch(runtime.baseUrl, {
+          redirect: "manual",
+        });
 
-        expect(landingResponse.status).toBe(200);
-        expect(landingPage).toContain("Orqis control center");
-        expect(landingPage).toContain("Main Chat");
-        expect(landingPage).toContain("Files");
-        expect(landingPage).toContain("Agent Threads");
-        expect(landingPage).toContain("PM -> Frontend Agent");
-        expect(landingPage).toContain("PM -> Backend Agent");
-        expect(landingPage).toContain("PM -> Reviewer");
-        expect(landingPage).toContain("Assigned Agents");
+        expect(unauthorizedLandingResponse.status).toBe(302);
+        expect(unauthorizedLandingResponse.headers.get("location")).toBe("/login");
+
+        const loginPageResponse = await fetch(`${runtime.baseUrl}/login`);
+        const loginPage = await loginPageResponse.text();
+
+        expect(loginPageResponse.status).toBe(200);
+        expect(loginPage).toContain("Sign in to Orqis");
+
+        const unauthorizedProjectsResponse = await fetch(`${runtime.baseUrl}/api/projects`);
+        const unauthorizedProjectsBody =
+          (await unauthorizedProjectsResponse.json()) as { error?: string };
+
+        expect(unauthorizedProjectsResponse.status).toBe(401);
+        expect(unauthorizedProjectsBody.error).toBe("Authentication required.");
+
+        const sessionCookie = await createSessionCookie(runtime.baseUrl, "owner");
+
+        const sessionResponse = await fetch(`${runtime.baseUrl}/api/session`, {
+          headers: withSessionCookie(sessionCookie),
+        });
+        const sessionBody = (await sessionResponse.json()) as {
+          authenticated?: boolean;
+          session?: {
+            actorId?: string;
+          };
+        };
+
+        expect(sessionResponse.status).toBe(200);
+        expect(sessionBody.authenticated).toBe(true);
+        expect(sessionBody.session?.actorId).toBe("owner");
+
+        const firstLandingResponse = await fetch(runtime.baseUrl, {
+          headers: withSessionCookie(sessionCookie),
+        });
+        const firstLandingPage = await firstLandingResponse.text();
+
+        expect(firstLandingResponse.status).toBe(200);
+        expect(firstLandingPage).toContain("Orqis control center");
+        expect(firstLandingPage).toContain("Main Chat");
+        expect(firstLandingPage).toContain("Files");
+        expect(firstLandingPage).toContain("Agent Threads");
+        expect(firstLandingPage).toContain("PM -> Frontend Agent");
+        expect(firstLandingPage).toContain("PM -> Backend Agent");
+        expect(firstLandingPage).toContain("PM -> Reviewer");
+        expect(firstLandingPage).toContain("Assigned Agents");
+        expect(firstLandingPage).toContain("Log out");
+
+        const refreshedLandingResponse = await fetch(runtime.baseUrl, {
+          headers: withSessionCookie(sessionCookie),
+        });
+
+        expect(refreshedLandingResponse.status).toBe(200);
       } finally {
         await runtime.stop();
         await cleanup();
@@ -89,13 +186,19 @@ describe("@orqis/web runtime", () => {
             readonly workspaceId: string;
           }
         | undefined;
+      let firstRuntimeSessionCookie = "";
 
       try {
+        firstRuntimeSessionCookie = await createSessionCookie(
+          firstRuntime.baseUrl,
+          "owner",
+        );
+
         const createProjectResponse = await fetch(`${firstRuntime.baseUrl}/api/projects`, {
           method: "POST",
-          headers: {
+          headers: withSessionCookie(firstRuntimeSessionCookie, {
             "content-type": "application/json",
-          },
+          }),
           body: JSON.stringify({
             name: "Project Alpha",
             description: "Scope for alpha",
@@ -126,7 +229,9 @@ describe("@orqis/web runtime", () => {
           throw new Error("project create response did not include project details");
         }
 
-        const listProjectsResponse = await fetch(`${firstRuntime.baseUrl}/api/projects`);
+        const listProjectsResponse = await fetch(`${firstRuntime.baseUrl}/api/projects`, {
+          headers: withSessionCookie(firstRuntimeSessionCookie),
+        });
         const listProjectsBody = (await listProjectsResponse.json()) as {
           projects?: Array<{
             projectId: string;
@@ -148,9 +253,9 @@ describe("@orqis/web runtime", () => {
           `${firstRuntime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/messages`,
           {
             method: "POST",
-            headers: {
+            headers: withSessionCookie(firstRuntimeSessionCookie, {
               "content-type": "application/json",
-            },
+            }),
             body: JSON.stringify({
               projectId: createdProject.projectId,
               actorType: "user",
@@ -181,7 +286,20 @@ describe("@orqis/web runtime", () => {
       });
 
       try {
-        const listProjectsResponse = await fetch(`${secondRuntime.baseUrl}/api/projects`);
+        const staleSessionResponse = await fetch(`${secondRuntime.baseUrl}/api/projects`, {
+          headers: withSessionCookie(firstRuntimeSessionCookie),
+        });
+
+        expect(staleSessionResponse.status).toBe(401);
+
+        const secondRuntimeSessionCookie = await createSessionCookie(
+          secondRuntime.baseUrl,
+          "owner",
+        );
+
+        const listProjectsResponse = await fetch(`${secondRuntime.baseUrl}/api/projects`, {
+          headers: withSessionCookie(secondRuntimeSessionCookie),
+        });
         const listProjectsBody = (await listProjectsResponse.json()) as {
           projects?: Array<{
             projectId: string;
@@ -199,6 +317,9 @@ describe("@orqis/web runtime", () => {
 
         const timelineResponse = await fetch(
           `${secondRuntime.baseUrl}/api/workspaces/${encodeURIComponent(persistedProject.workspaceId)}/messages`,
+          {
+            headers: withSessionCookie(secondRuntimeSessionCookie),
+          },
         );
         const timelineBody = (await timelineResponse.json()) as {
           messages?: Array<{
