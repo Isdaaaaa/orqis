@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Finish Phase 2 by adding the specialist-agent adapter registry contract in core/runtime boundaries.
+Start Phase 3 with service-level task claim/ownership invariants (single active execution lock and deterministic conflict errors).
 
 ## Completed
 
@@ -160,20 +160,20 @@ Must finish before Phase 3:
 - [ ] Enforce task claim/ownership invariants at service level (single active execution lock per task and deterministic conflict errors)
 - [ ] Add regression tests proving guarded task/run transitions are blocked until required approvals are resolved
 - [ ] Add regression tests proving all task/approval/run mutations emit audit events with actor and run correlation metadata
-
-Unclassified:
 - [ ] Add migration regression coverage for `messages`/`tasks`/`approvals` update-path guards so same-project/workspace linked ref triggers are verified on updates, not only inserts
-- [ ] Add migration regression coverage proving `parent_task_id` and `parent_message_id` are nulled on parent delete after composite lineage constraints
-- [ ] Add web-runtime API regression coverage for `GET/POST /api/workspaces/:workspaceId/messages` (validation errors, project/workspace conflict responses, and chronological payload ordering)
 - [ ] Add web-runtime auth regression coverage for session lifecycle edges (`DELETE /api/session` cookie clearing, authenticated `GET /login` redirect, and unauthorized `GET/POST /api/workspaces/:workspaceId/messages`)
 - [ ] Harden local session cookie/auth response headers for tunnel exposure (`Secure` cookie behavior when request origin is HTTPS and `Cache-Control: no-store` on auth-sensitive HTML/API responses)
+
+Safe to defer:
+- [ ] Add migration regression coverage proving `parent_task_id` and `parent_message_id` are nulled on parent delete after composite lineage constraints
+- [ ] Add web-runtime API regression coverage for `GET/POST /api/workspaces/:workspaceId/messages` (validation errors, project/workspace conflict responses, and chronological payload ordering)
 - [ ] Harden web-runtime shutdown to close keep-alive connections promptly so `runtime.stop()` does not block for multi-second idle timeouts after request traffic
+
+Move to later phase:
 - [ ] Persist selected project, section, and thread in URL/local state so refresh restores workspace context
 - [ ] Add keyboard/a11y navigation coverage for project rail and workspace channel list (focus order, `aria-current`, and section/thread activation)
 - [ ] Add responsive sidebar-collapse behavior and regression coverage so the fixed composer does not obscure timeline content on narrow viewports
 - [ ] Add browser regression coverage for workspace-shell script initialization and quick-project popover visibility (prevent parse-time JS failures and clipped rail popover interactions)
-
-Move to later phase:
 - [ ] Add query helpers for issue/task-centric run history so timeline and run drill-down share one contract (Phase 4 timeline/read-model hardening)
 
 ## Phase 3: Project Manager planning and task approvals
