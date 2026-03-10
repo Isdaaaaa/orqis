@@ -94,11 +94,14 @@ Safe to defer while Phase 2 starts:
   - Summary (follow-up): Replaced the landing scaffold with a minimal timeline UI that can post/reload messages through the new workspace timeline endpoints.
   - Changed: `apps/web/src/index.ts`, `apps/web/src/persistence.ts`, `apps/web/src/node-sqlite.d.ts`, `apps/web/test/runtime.test.ts`, `apps/web/test/timeline-persistence.test.ts`, `TODO.md`.
 
-- [ ] Redesign workspace UI shell into a Discord-style double-sidebar layout
+- [x] Redesign workspace UI shell into a Discord-style double-sidebar layout
   - Acceptance criteria: left icon-only project rail supports selecting existing projects and quick project creation.
   - Acceptance criteria: project-scoped workspace navigation sidebar includes `Main Chat`, `Files`, `Agent Threads`, and `Assigned Agents`, with role-based thread entries under `Agent Threads` (`PM -> Frontend Agent`, `PM -> Backend Agent`, `PM -> Reviewer`).
   - Acceptance criteria: main panel renders the selected section/thread, keeps the timeline as the visual focus for chat/thread views, and shows a fixed bottom composer for chat/thread views.
   - Acceptance criteria: existing project list/create/select and workspace message persistence flows remain functional after the shell redesign.
+  - Summary: Replaced the single-card timeline page with a Discord-style double-sidebar workspace shell featuring an icon-only project rail, project-scoped navigation channels, role-based agent thread entries, section/thread-aware main panel rendering, and a fixed bottom composer for timeline views.
+  - Summary (follow-up): Preserved the existing project list/create/select plus workspace timeline persistence API flows and added landing-page runtime assertions for the new shell navigation labels.
+  - Changed: `apps/web/src/index.ts`, `apps/web/test/runtime.test.ts`, `TODO.md`.
 
 - [ ] Add basic local session auth
   - Acceptance criteria: protected routes require login and session persistence works across refresh.
