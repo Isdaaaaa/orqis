@@ -1,4 +1,10 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type OutgoingHttpHeaders,
+  type ServerResponse,
+} from "node:http";
+import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
 import {
@@ -14,9 +20,14 @@ import {
 export const WEB_PACKAGE_NAME = "@orqis/web";
 
 const MAX_REQUEST_BODY_BYTES = 64 * 1024;
+const LOGIN_PATH = "/login";
+const SESSION_PATH = "/api/session";
 const PROJECTS_PATH = "/api/projects";
 const WORKSPACE_MESSAGES_PATH_PATTERN = /^\/api\/workspaces\/([^/]+)\/messages$/;
 const WORKSPACE_MESSAGE_ACTOR_TYPES = ["user", "agent", "system"] as const;
+const SESSION_COOKIE_NAME = "orqis_session";
+const SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
+const AUTH_REQUIRED_ERROR_MESSAGE = "Authentication required.";
 
 export interface StartOrqisWebRuntimeOptions {
   readonly host: string;
@@ -42,6 +53,7 @@ export interface OrqisWebRuntimeHandle {
 interface RuntimeRequestContext {
   readonly startedAt: number;
   readonly timelineStore: WorkspaceTimelineStore;
+  readonly sessionStore: RuntimeSessionStore;
 }
 
 interface PostWorkspaceMessageBody {
@@ -54,6 +66,84 @@ interface PostWorkspaceMessageBody {
 interface CreateProjectBody {
   readonly name: string;
   readonly description?: string;
+}
+
+interface CreateSessionBody {
+  readonly actorId: string;
+}
+
+interface RuntimeSession {
+  readonly id: string;
+  readonly actorId: string;
+  readonly createdAt: string;
+  readonly expiresAt: string;
+}
+
+interface RuntimeSessionStore {
+  createSession(actorId: string): RuntimeSession;
+  getSession(sessionId: string): RuntimeSession | undefined;
+  deleteSession(sessionId: string): void;
+}
+
+class InMemoryRuntimeSessionStore implements RuntimeSessionStore {
+  private readonly sessions = new Map<string, RuntimeSession>();
+
+  createSession(actorId: string): RuntimeSession {
+    const normalizedActorId = actorId.trim();
+
+    if (normalizedActorId.length === 0) {
+      throw new Error("actorId must be a non-empty string.");
+    }
+
+    const now = Date.now();
+    const createdAt = new Date(now).toISOString();
+    const expiresAt = new Date(
+      now + SESSION_COOKIE_MAX_AGE_SECONDS * 1000,
+    ).toISOString();
+    const session: RuntimeSession = {
+      id: randomUUID(),
+      actorId: normalizedActorId,
+      createdAt,
+      expiresAt,
+    };
+
+    this.deleteExpiredSessions(now);
+    this.sessions.set(session.id, session);
+    return session;
+  }
+
+  getSession(sessionId: string): RuntimeSession | undefined {
+    const normalizedSessionId = sessionId.trim();
+
+    if (normalizedSessionId.length === 0) {
+      return undefined;
+    }
+
+    const session = this.sessions.get(normalizedSessionId);
+
+    if (session === undefined) {
+      return undefined;
+    }
+
+    if (Date.parse(session.expiresAt) <= Date.now()) {
+      this.sessions.delete(normalizedSessionId);
+      return undefined;
+    }
+
+    return session;
+  }
+
+  deleteSession(sessionId: string): void {
+    this.sessions.delete(sessionId.trim());
+  }
+
+  private deleteExpiredSessions(now: number): void {
+    for (const [sessionId, session] of this.sessions) {
+      if (Date.parse(session.expiresAt) <= now) {
+        this.sessions.delete(sessionId);
+      }
+    }
+  }
 }
 
 class RequestBodyError extends Error {
@@ -424,6 +514,19 @@ function getWebAppHtml(): string {
       background: var(--panel-overlay);
     }
 
+    .panel-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .session-actor {
+      font-size: 0.74rem;
+      color: var(--text-muted);
+    }
+
     .panel-context {
       margin: 0;
       font-size: 0.71rem;
@@ -747,7 +850,11 @@ function getWebAppHtml(): string {
           <h2 id="panel-title">Main Chat</h2>
           <p id="panel-subtitle">Orqis control center workspace group chat timeline with persistent message history.</p>
         </div>
-        <button id="reload-messages" class="secondary" type="button">Reload timeline</button>
+        <div class="panel-actions">
+          <span id="session-actor" class="session-actor"></span>
+          <button id="reload-messages" class="secondary" type="button">Reload timeline</button>
+          <button id="logout" class="secondary" type="button">Log out</button>
+        </div>
       </header>
 
       <section id="status" class="status" role="status"></section>
@@ -796,6 +903,7 @@ function getWebAppHtml(): string {
     const panelContext = document.getElementById("panel-context");
     const panelTitle = document.getElementById("panel-title");
     const panelSubtitle = document.getElementById("panel-subtitle");
+    const sessionActor = document.getElementById("session-actor");
     const timelineRegion = document.getElementById("timeline-region");
     const detailRegion = document.getElementById("detail-region");
     const composerShell = document.getElementById("composer-shell");
@@ -804,6 +912,7 @@ function getWebAppHtml(): string {
     const contentInput = document.getElementById("message-content");
     const sendButton = document.getElementById("send-message");
     const reloadButton = document.getElementById("reload-messages");
+    const logoutButton = document.getElementById("logout");
     const status = document.getElementById("status");
     const messagesList = document.getElementById("messages");
     const navigationButtons = Array.from(
@@ -811,6 +920,7 @@ function getWebAppHtml(): string {
     );
 
     const projectsUrl = "/api/projects";
+    const sessionUrl = "/api/session";
 
     const viewMeta = {
       "main-chat": {
@@ -1148,6 +1258,22 @@ function getWebAppHtml(): string {
       return true;
     };
 
+    const loadSession = async () => {
+      const response = await fetch(sessionUrl);
+      const payload = await response.json();
+
+      if (!response.ok || payload.authenticated !== true) {
+        window.location.assign("${LOGIN_PATH}");
+        return false;
+      }
+
+      const actorId = typeof payload.session?.actorId === "string"
+        ? payload.session.actorId
+        : "";
+      sessionActor.textContent = actorId.length > 0 ? "Signed in as " + actorId : "";
+      return true;
+    };
+
     const toggleQuickCreatePopover = (open) => {
       quickCreatePopover.hidden = !open;
 
@@ -1314,6 +1440,20 @@ function getWebAppHtml(): string {
       }
     });
 
+    logoutButton.addEventListener("click", async () => {
+      logoutButton.disabled = true;
+
+      try {
+        await fetch(sessionUrl, {
+          method: "DELETE",
+        });
+        window.location.assign("${LOGIN_PATH}");
+      } catch (error) {
+        logoutButton.disabled = false;
+        setStatus(error instanceof Error ? error.message : String(error), true);
+      }
+    });
+
     for (const button of navigationButtons) {
       button.addEventListener("click", async () => {
         const viewId = button.dataset.viewId;
@@ -1338,8 +1478,19 @@ function getWebAppHtml(): string {
 
     applyView();
 
-    void loadProjects()
+    void loadSession()
+      .then((isAuthenticated) => {
+        if (!isAuthenticated) {
+          return false;
+        }
+
+        return loadProjects();
+      })
       .then((hasProjects) => {
+        if (hasProjects === false) {
+          return;
+        }
+
         setStatus(
           hasProjects
             ? "Project timeline loaded."
@@ -1349,6 +1500,192 @@ function getWebAppHtml(): string {
       .catch((error) => {
         setStatus(error instanceof Error ? error.message : String(error), true);
       });
+  </script>
+</body>
+</html>`;
+}
+
+function getWebLoginHtml(): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Orqis Sign In</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+      --bg: radial-gradient(circle at 15% 20%, #32486b 0%, #1f2c44 36%, #121a2b 72%, #0b111d 100%);
+      --card-bg: rgba(14, 20, 33, 0.84);
+      --border: rgba(255, 255, 255, 0.16);
+      --text-main: #f0f5ff;
+      --text-muted: #a7b4d6;
+      --error: #ffb5be;
+      --input-bg: rgba(10, 14, 24, 0.8);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--font-family);
+      color: var(--text-main);
+      background: var(--bg);
+      display: grid;
+      place-items: center;
+      padding: 1rem;
+    }
+
+    .login-card {
+      width: min(100%, 420px);
+      border-radius: 16px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      box-shadow: 0 24px 48px rgba(2, 6, 13, 0.42);
+      padding: 1.1rem;
+      display: grid;
+      gap: 0.9rem;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.36rem;
+    }
+
+    p {
+      margin: 0;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      line-height: 1.42;
+    }
+
+    label {
+      display: grid;
+      gap: 0.42rem;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    input {
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      background: var(--input-bg);
+      color: var(--text-main);
+      padding: 0.6rem 0.68rem;
+      font: inherit;
+    }
+
+    input:focus,
+    button:focus-visible {
+      outline: none;
+      border-color: rgba(139, 174, 255, 0.9);
+      box-shadow: 0 0 0 2px rgba(126, 167, 255, 0.22);
+    }
+
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 0.62rem 0.74rem;
+      font: inherit;
+      font-weight: 600;
+      color: #0e1a2e;
+      background: linear-gradient(135deg, #9ec2ff 0%, #7eabff 100%);
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    #status {
+      min-height: 1.35rem;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    #status[data-variant="error"] {
+      color: var(--error);
+    }
+  </style>
+</head>
+<body>
+  <main class="login-card">
+    <header>
+      <h1>Sign in to Orqis</h1>
+      <p>Use a local actor ID to create a browser session for this runtime.</p>
+    </header>
+    <form id="login-form">
+      <label for="actor-id">Actor ID
+        <input id="actor-id" name="actorId" autocomplete="username" placeholder="owner" required />
+      </label>
+      <button id="login-button" type="submit">Sign in</button>
+    </form>
+    <div id="status" role="status"></div>
+  </main>
+  <script type="module">
+    const loginForm = document.getElementById("login-form");
+    const actorIdInput = document.getElementById("actor-id");
+    const loginButton = document.getElementById("login-button");
+    const status = document.getElementById("status");
+    const sessionUrl = "${SESSION_PATH}";
+
+    const setStatus = (message, isError = false) => {
+      status.textContent = message;
+      status.dataset.variant = isError ? "error" : "info";
+    };
+
+    const ensureSignedOut = async () => {
+      const response = await fetch(sessionUrl);
+      const payload = await response.json();
+
+      if (response.ok && payload.authenticated === true) {
+        window.location.assign("/");
+      }
+    };
+
+    loginForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+
+      const actorId = actorIdInput.value.trim();
+
+      if (actorId.length === 0) {
+        setStatus("Actor ID is required.", true);
+        return;
+      }
+
+      loginButton.disabled = true;
+      setStatus("Signing in...");
+
+      try {
+        const response = await fetch(sessionUrl, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            actorId,
+          }),
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error ?? "Failed to create session.");
+        }
+
+        window.location.assign("/");
+      } catch (error) {
+        loginButton.disabled = false;
+        setStatus(error instanceof Error ? error.message : String(error), true);
+      }
+    });
+
+    void ensureSignedOut().catch((error) => {
+      setStatus(error instanceof Error ? error.message : String(error), true);
+    });
   </script>
 </body>
 </html>`;
@@ -1447,6 +1784,33 @@ function parseCreateProjectBody(
   };
 }
 
+function parseCreateSessionBody(
+  body: unknown,
+): { ok: true; value: CreateSessionBody } | { ok: false; error: string } {
+  if (!isRecord(body)) {
+    return {
+      ok: false,
+      error: "Session payload must be a JSON object.",
+    };
+  }
+
+  const actorId = normalizeOptionalString(body.actorId);
+
+  if (actorId === undefined) {
+    return {
+      ok: false,
+      error: "actorId must be a non-empty string.",
+    };
+  }
+
+  return {
+    ok: true,
+    value: {
+      actorId,
+    },
+  };
+}
+
 function resolveWorkspaceMessagesPath(pathname: string): string | undefined {
   const match = pathname.match(WORKSPACE_MESSAGES_PATH_PATTERN);
 
@@ -1472,6 +1836,80 @@ function getWebRuntimeLabel(): string {
   return "Orqis Web runtime scaffold";
 }
 
+function resolveRequestCookie(
+  request: IncomingMessage,
+  cookieName: string,
+): string | undefined {
+  const cookieHeader = request.headers.cookie;
+
+  if (cookieHeader === undefined) {
+    return undefined;
+  }
+
+  const mergedHeader = Array.isArray(cookieHeader)
+    ? cookieHeader.join(";")
+    : cookieHeader;
+
+  for (const cookiePart of mergedHeader.split(";")) {
+    const [rawName, ...rawValueParts] = cookiePart.split("=");
+
+    if (rawName === undefined || rawValueParts.length === 0) {
+      continue;
+    }
+
+    if (rawName.trim() !== cookieName) {
+      continue;
+    }
+
+    const rawValue = rawValueParts.join("=").trim();
+
+    if (rawValue.length === 0) {
+      return undefined;
+    }
+
+    try {
+      return decodeURIComponent(rawValue);
+    } catch {
+      return undefined;
+    }
+  }
+
+  return undefined;
+}
+
+function createSessionCookieHeader(sessionId: string): string {
+  return [
+    `${SESSION_COOKIE_NAME}=${encodeURIComponent(sessionId)}`,
+    "Path=/",
+    `Max-Age=${SESSION_COOKIE_MAX_AGE_SECONDS}`,
+    "HttpOnly",
+    "SameSite=Lax",
+  ].join("; ");
+}
+
+function createSessionCookieClearHeader(): string {
+  return [
+    `${SESSION_COOKIE_NAME}=`,
+    "Path=/",
+    "Max-Age=0",
+    "HttpOnly",
+    "SameSite=Lax",
+  ].join("; ");
+}
+
+function resolveRuntimeSession(
+  request: IncomingMessage,
+  context: RuntimeRequestContext,
+): RuntimeSession | undefined {
+  const sessionId = resolveRequestCookie(request, SESSION_COOKIE_NAME);
+
+  if (sessionId === undefined) {
+    return undefined;
+  }
+
+  return context.sessionStore.getSession(sessionId);
+}
+
 function formatHostForUrl(host: string): string {
   return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 }
@@ -1495,9 +1933,11 @@ function writeJson(
   response: ServerResponse,
   statusCode: number,
   payload: unknown,
+  headers: OutgoingHttpHeaders = {},
 ): void {
   response.writeHead(statusCode, {
     "content-type": "application/json; charset=utf-8",
+    ...headers,
   });
   response.end(`${JSON.stringify(payload)}\n`);
 }
@@ -1507,11 +1947,24 @@ function writeText(
   statusCode: number,
   body: string,
   contentType = "text/plain; charset=utf-8",
+  headers: OutgoingHttpHeaders = {},
 ): void {
   response.writeHead(statusCode, {
     "content-type": contentType,
+    ...headers,
   });
   response.end(body);
+}
+
+function writeRedirect(
+  response: ServerResponse,
+  location: string,
+  statusCode = 302,
+): void {
+  response.writeHead(statusCode, {
+    location,
+  });
+  response.end();
 }
 
 function createHealthPayload(startedAt: number): OrqisWebRuntimeHealthPayload {
@@ -1556,6 +2009,112 @@ async function readJsonRequestBody(request: IncomingMessage): Promise<unknown> {
   } catch {
     throw new RequestBodyJsonParseError("request body must be valid JSON");
   }
+}
+
+function writeAuthenticationRequired(response: ServerResponse): void {
+  writeJson(response, 401, {
+    error: AUTH_REQUIRED_ERROR_MESSAGE,
+  });
+}
+
+async function handleSessionRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  context: RuntimeRequestContext,
+): Promise<void> {
+  const sessionId = resolveRequestCookie(request, SESSION_COOKIE_NAME);
+  const session = resolveRuntimeSession(request, context);
+
+  if (request.method === "GET") {
+    writeJson(response, 200, {
+      authenticated: session !== undefined,
+      session:
+        session === undefined
+          ? null
+          : {
+              actorId: session.actorId,
+              createdAt: session.createdAt,
+              expiresAt: session.expiresAt,
+            },
+    });
+    return;
+  }
+
+  if (request.method === "POST") {
+    let payload;
+
+    try {
+      payload = await readJsonRequestBody(request);
+    } catch (error) {
+      if (error instanceof RequestBodyTooLargeError) {
+        writeJson(response, 413, {
+          error: error.message,
+        });
+        return;
+      }
+
+      if (error instanceof RequestBodyJsonParseError) {
+        writeJson(response, 400, {
+          error: error.message,
+        });
+        return;
+      }
+
+      throw error;
+    }
+
+    const parsedBody = parseCreateSessionBody(payload);
+
+    if (!parsedBody.ok) {
+      writeJson(response, 400, {
+        error: parsedBody.error,
+      });
+      return;
+    }
+
+    const createdSession = context.sessionStore.createSession(parsedBody.value.actorId);
+
+    writeJson(
+      response,
+      201,
+      {
+        authenticated: true,
+        session: {
+          actorId: createdSession.actorId,
+          createdAt: createdSession.createdAt,
+          expiresAt: createdSession.expiresAt,
+        },
+      },
+      {
+        "set-cookie": createSessionCookieHeader(createdSession.id),
+      },
+    );
+    return;
+  }
+
+  if (request.method === "DELETE") {
+    if (sessionId !== undefined) {
+      context.sessionStore.deleteSession(sessionId);
+    }
+
+    writeJson(
+      response,
+      200,
+      {
+        authenticated: false,
+      },
+      {
+        "set-cookie": createSessionCookieClearHeader(),
+      },
+    );
+    return;
+  }
+
+  response.setHeader("allow", "GET, POST, DELETE");
+  writeJson(response, 405, {
+    error: "Method Not Allowed",
+    method: request.method ?? "UNKNOWN",
+  });
 }
 
 async function handleProjectsRoute(
@@ -1757,14 +2316,40 @@ async function handleRequest(
   context: RuntimeRequestContext,
 ): Promise<void> {
   const pathname = resolvePathname(request);
+  const session = resolveRuntimeSession(request, context);
 
   if (request.method === "GET" && pathname === "/health") {
     writeJson(response, 200, createHealthPayload(context.startedAt));
     return;
   }
 
+  if (pathname === SESSION_PATH) {
+    await handleSessionRoute(request, response, context);
+    return;
+  }
+
+  if (request.method === "GET" && pathname === LOGIN_PATH) {
+    if (session !== undefined) {
+      writeRedirect(response, "/");
+      return;
+    }
+
+    writeText(response, 200, getWebLoginHtml(), "text/html; charset=utf-8");
+    return;
+  }
+
   if (request.method === "GET" && pathname === "/") {
+    if (session === undefined) {
+      writeRedirect(response, LOGIN_PATH);
+      return;
+    }
+
     writeText(response, 200, getWebAppHtml(), "text/html; charset=utf-8");
+    return;
+  }
+
+  if (pathname.startsWith("/api/") && session === undefined) {
+    writeAuthenticationRequired(response);
     return;
   }
 
@@ -1866,11 +2451,13 @@ export async function startOrqisWebRuntime(
 ): Promise<OrqisWebRuntimeHandle> {
   const startedAt = Date.now();
   const timelineStore = createWorkspaceTimelineStore(options.persistence);
+  const sessionStore = new InMemoryRuntimeSessionStore();
 
   try {
     const { address, stop: stopServer } = await listen(options.host, options.port, {
       startedAt,
       timelineStore,
+      sessionStore,
     });
 
     const host = resolveRuntimeClientHost(options.host, address);

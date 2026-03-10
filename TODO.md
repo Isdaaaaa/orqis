@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Continue Phase 2 by redesigning the workspace UI shell into a Discord-style double-sidebar layout while preserving current project/timeline flows.
+Finish Phase 2 by adding the specialist-agent adapter registry contract in core/runtime boundaries.
 
 ## Completed
 
@@ -103,8 +103,11 @@ Safe to defer while Phase 2 starts:
   - Summary (follow-up): Preserved the existing project list/create/select plus workspace timeline persistence API flows and added landing-page runtime assertions for the new shell navigation labels.
   - Changed: `apps/web/src/index.ts`, `apps/web/test/runtime.test.ts`, `TODO.md`.
 
-- [ ] Add basic local session auth
+- [x] Add basic local session auth
   - Acceptance criteria: protected routes require login and session persistence works across refresh.
+  - Summary: Added local browser-session auth with a dedicated sign-in page, `HttpOnly` session cookies, protected web/API routes, and logout support in the workspace shell.
+  - Summary (follow-up): Added runtime regression coverage for unauthenticated route protection, login/session creation, refresh persistence with the same cookie, and authenticated project/timeline API flows.
+  - Changed: `apps/web/src/index.ts`, `apps/web/test/runtime.test.ts`, `README.md`, `TODO.md`.
 
 - [ ] Add specialist-agent adapter registry contract in core/runtime boundaries
   - Acceptance criteria: adapter type registry supports execution + environment validation hooks and rejects unknown adapter types for task execution.
