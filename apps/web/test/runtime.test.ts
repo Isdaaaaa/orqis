@@ -53,6 +53,13 @@ describe("@orqis/web runtime", () => {
 
         expect(landingResponse.status).toBe(200);
         expect(landingPage).toContain("Orqis control center");
+        expect(landingPage).toContain("Main Chat");
+        expect(landingPage).toContain("Files");
+        expect(landingPage).toContain("Agent Threads");
+        expect(landingPage).toContain("PM -> Frontend Agent");
+        expect(landingPage).toContain("PM -> Backend Agent");
+        expect(landingPage).toContain("PM -> Reviewer");
+        expect(landingPage).toContain("Assigned Agents");
       } finally {
         await runtime.stop();
         await cleanup();
