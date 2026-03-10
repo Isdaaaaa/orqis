@@ -162,6 +162,7 @@ Unclassified:
 - [ ] Persist selected project, section, and thread in URL/local state so refresh restores workspace context
 - [ ] Add keyboard/a11y navigation coverage for project rail and workspace channel list (focus order, `aria-current`, and section/thread activation)
 - [ ] Add responsive sidebar-collapse behavior and regression coverage so the fixed composer does not obscure timeline content on narrow viewports
+- [ ] Add browser regression coverage for workspace-shell script initialization and quick-project popover visibility (prevent parse-time JS failures and clipped rail popover interactions)
 
 Move to later phase:
 - [ ] Add query helpers for issue/task-centric run history so timeline and run drill-down share one contract (Phase 4 timeline/read-model hardening)
