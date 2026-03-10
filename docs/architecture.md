@@ -34,7 +34,7 @@ Responsibilities:
 
 - Auth/session management.
 - Project list/create/manage views.
-- Workspace/group chat UI per project.
+- Workspace/group chat UI per project, including project rail + project-scoped workspace navigation shell.
 - Provider/model/agent configuration UI.
 - Task/approval and run status views.
 

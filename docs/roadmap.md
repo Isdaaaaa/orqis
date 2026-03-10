@@ -62,6 +62,7 @@ Deliverables:
   - approval records with lifecycle + decision metadata,
   - append-only audit event tables and indexes for timeline queries.
 - Project CRUD and project picker UI.
+- Discord-style workspace shell with project rail + project-scoped navigation sidebar.
 - Per-project workspace timeline with message persistence.
 - Basic auth/session flow.
 

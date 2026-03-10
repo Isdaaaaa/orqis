@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Continue Phase 2 by adding basic local session auth.
+Continue Phase 2 by redesigning the workspace UI shell into a Discord-style double-sidebar layout while preserving current project/timeline flows.
 
 ## Completed
 
@@ -94,6 +94,12 @@ Safe to defer while Phase 2 starts:
   - Summary (follow-up): Replaced the landing scaffold with a minimal timeline UI that can post/reload messages through the new workspace timeline endpoints.
   - Changed: `apps/web/src/index.ts`, `apps/web/src/persistence.ts`, `apps/web/src/node-sqlite.d.ts`, `apps/web/test/runtime.test.ts`, `apps/web/test/timeline-persistence.test.ts`, `TODO.md`.
 
+- [ ] Redesign workspace UI shell into a Discord-style double-sidebar layout
+  - Acceptance criteria: left icon-only project rail supports selecting existing projects and quick project creation.
+  - Acceptance criteria: project-scoped workspace navigation sidebar includes `Main Chat`, `Files`, `Agent Threads`, and `Assigned Agents`, with role-based thread entries under `Agent Threads` (`PM -> Frontend Agent`, `PM -> Backend Agent`, `PM -> Reviewer`).
+  - Acceptance criteria: main panel renders the selected section/thread, keeps the timeline as the visual focus for chat/thread views, and shows a fixed bottom composer for chat/thread views.
+  - Acceptance criteria: existing project list/create/select and workspace message persistence flows remain functional after the shell redesign.
+
 - [ ] Add basic local session auth
   - Acceptance criteria: protected routes require login and session persistence works across refresh.
 
@@ -150,6 +156,9 @@ Unclassified:
 - [ ] Add migration regression coverage proving `parent_task_id` and `parent_message_id` are nulled on parent delete after composite lineage constraints
 - [ ] Add web-runtime API regression coverage for `GET/POST /api/workspaces/:workspaceId/messages` (validation errors, project/workspace conflict responses, and chronological payload ordering)
 - [ ] Harden web-runtime shutdown to close keep-alive connections promptly so `runtime.stop()` does not block for multi-second idle timeouts after request traffic
+- [ ] Persist selected project, section, and thread in URL/local state so refresh restores workspace context
+- [ ] Add keyboard/a11y navigation coverage for project rail and workspace channel list (focus order, `aria-current`, and section/thread activation)
+- [ ] Add responsive sidebar-collapse behavior and regression coverage so the fixed composer does not obscure timeline content on narrow viewports
 
 Move to later phase:
 - [ ] Add query helpers for issue/task-centric run history so timeline and run drill-down share one contract (Phase 4 timeline/read-model hardening)
