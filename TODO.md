@@ -161,6 +161,8 @@ Unclassified:
 - [ ] Add migration regression coverage for `messages`/`tasks`/`approvals` update-path guards so same-project/workspace linked ref triggers are verified on updates, not only inserts
 - [ ] Add migration regression coverage proving `parent_task_id` and `parent_message_id` are nulled on parent delete after composite lineage constraints
 - [ ] Add web-runtime API regression coverage for `GET/POST /api/workspaces/:workspaceId/messages` (validation errors, project/workspace conflict responses, and chronological payload ordering)
+- [ ] Add web-runtime auth regression coverage for session lifecycle edges (`DELETE /api/session` cookie clearing, authenticated `GET /login` redirect, and unauthorized `GET/POST /api/workspaces/:workspaceId/messages`)
+- [ ] Harden local session cookie/auth response headers for tunnel exposure (`Secure` cookie behavior when request origin is HTTPS and `Cache-Control: no-store` on auth-sensitive HTML/API responses)
 - [ ] Harden web-runtime shutdown to close keep-alive connections promptly so `runtime.stop()` does not block for multi-second idle timeouts after request traffic
 - [ ] Persist selected project, section, and thread in URL/local state so refresh restores workspace context
 - [ ] Add keyboard/a11y navigation coverage for project rail and workspace channel list (focus order, `aria-current`, and section/thread activation)
