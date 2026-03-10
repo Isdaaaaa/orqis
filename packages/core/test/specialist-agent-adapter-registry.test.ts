@@ -100,4 +100,55 @@ describe("specialist agent adapter registry", () => {
       createSpecialistAgentAdapterRegistry([adapterA, adapterB]),
     ).toThrow(DuplicateSpecialistAgentAdapterTypeError);
   });
+
+  it("preserves class-based adapter hook execution after registration", async () => {
+    class ClassBackedAdapter implements SpecialistAgentAdapter {
+      readonly type = "LOCAL_PROCESS";
+
+      validateCount = 0;
+      discoverCount = 0;
+      executeCount = 0;
+
+      validateEnvironment(): SpecialistAgentEnvironmentValidationResult {
+        this.validateCount += 1;
+        return DEFAULT_VALIDATION_RESULT;
+      }
+
+      discoverCapabilities(): readonly SpecialistAgentCapability[] {
+        this.discoverCount += 1;
+        return DEFAULT_CAPABILITIES;
+      }
+
+      executeTask(): SpecialistAgentTaskExecutionResult {
+        this.executeCount += 1;
+        return DEFAULT_EXECUTION_RESULT;
+      }
+    }
+
+    const adapter = new ClassBackedAdapter();
+    const registry = createSpecialistAgentAdapterRegistry([adapter]);
+
+    const validation = await registry.validateEnvironment("local_process", {
+      projectId: "project_1",
+      workspaceId: "workspace_1",
+      runId: "run_1",
+      taskId: "task_1",
+      config: { sandbox: true },
+    });
+    const capabilities = await registry.discoverCapabilities("local_process");
+    const execution = await registry.executeTask("local_process", {
+      projectId: "project_1",
+      workspaceId: "workspace_1",
+      runId: "run_1",
+      taskId: "task_1",
+      payload: {},
+    });
+
+    expect(validation).toEqual(DEFAULT_VALIDATION_RESULT);
+    expect(capabilities).toEqual(DEFAULT_CAPABILITIES);
+    expect(execution).toEqual(DEFAULT_EXECUTION_RESULT);
+    expect(adapter.validateCount).toBe(1);
+    expect(adapter.discoverCount).toBe(1);
+    expect(adapter.executeCount).toBe(1);
+  });
 });

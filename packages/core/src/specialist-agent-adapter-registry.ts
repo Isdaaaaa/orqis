@@ -141,8 +141,10 @@ class InMemorySpecialistAgentAdapterRegistry
     }
 
     this.#adapters.set(normalizedType, {
-      ...adapter,
       type: normalizedType,
+      validateEnvironment: (input) => adapter.validateEnvironment(input),
+      discoverCapabilities: (input) => adapter.discoverCapabilities(input),
+      executeTask: (input) => adapter.executeTask(input),
     });
   }
 

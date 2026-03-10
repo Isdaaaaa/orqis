@@ -113,6 +113,7 @@ Safe to defer while Phase 2 starts:
   - Acceptance criteria: adapter type registry supports execution + environment validation hooks and rejects unknown adapter types for task execution.
   - Summary: Added a typed specialist-agent adapter contract in `@orqis/core` with execution, environment-validation, and capability-discovery hooks behind an explicit adapter-type registry.
   - Summary (follow-up): Added fail-closed registry errors for unknown/invalid/duplicate adapter types and covered adapter hook routing plus unknown-type rejection in package tests.
+  - Summary (follow-up): Fixed adapter registration so class-based adapters keep callable hook methods after registration, and added regression coverage for class-instance execution/validation/discovery routing.
   - Changed: `packages/core/src/index.ts`, `packages/core/src/specialist-agent-adapter-registry.ts`, `packages/core/test/specialist-agent-adapter-registry.test.ts`, `TODO.md`.
 
 #### Additional fixes discovered during Phase 2
