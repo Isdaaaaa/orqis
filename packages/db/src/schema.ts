@@ -76,6 +76,23 @@ export const workspaces = sqliteTable(
   ],
 );
 
+export const auditContext = sqliteTable(
+  "audit_context",
+  {
+    scope: text("scope").primaryKey(),
+    actorType: text("actor_type").notNull(),
+    actorId: text("actor_id"),
+    correlationRunId: text("correlation_run_id"),
+  },
+  (table) => [
+    check("audit_context_scope_check", sql`${table.scope} = 'current'`),
+    check(
+      "audit_context_actor_type_check",
+      sql`${table.actorType} in ('user', 'agent', 'system')`,
+    ),
+  ],
+);
+
 export const runs = sqliteTable(
   "runs",
   {
@@ -326,6 +343,7 @@ export const auditEvents = sqliteTable(
 
 export type Project = typeof projects.$inferSelect;
 export type Workspace = typeof workspaces.$inferSelect;
+export type AuditContext = typeof auditContext.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
 export type Approval = typeof approvals.$inferSelect;

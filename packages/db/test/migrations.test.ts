@@ -23,6 +23,17 @@ type SqliteDatabase = {
   run: (sql: string, params?: unknown[]) => unknown;
 };
 
+type PersistedAuditEvent = {
+  actorType: string;
+  actorId: string | null;
+  runId: string | null;
+  taskId: string | null;
+  approvalId: string | null;
+  entityType: string;
+  entityId: string;
+  action: string;
+};
+
 let sqlJsPromise: Promise<Awaited<ReturnType<typeof initSqlJs>>> | undefined;
 
 function getSqlJs() {
@@ -71,6 +82,53 @@ function extractTableSql(migrationSql: string, tableName: string): string {
   return match[0];
 }
 
+function queryRows(db: SqliteDatabase, sql: string): Record<string, unknown>[] {
+  const [result] = db.exec(sql);
+
+  if (!result) {
+    return [];
+  }
+
+  return result.values.map((values) =>
+    Object.fromEntries(
+      result.columns.map((column, index) => [column, values[index]]),
+    ),
+  );
+}
+
+function setAuditContext(
+  db: SqliteDatabase,
+  input: {
+    actorType: string;
+    actorId: string | null;
+    correlationRunId: string | null;
+  },
+): void {
+  db.run(
+    "INSERT OR REPLACE INTO audit_context (scope, actor_type, actor_id, correlation_run_id) VALUES ('current', ?, ?, ?)",
+    [input.actorType, input.actorId, input.correlationRunId],
+  );
+}
+
+function readAuditEvents(db: SqliteDatabase): PersistedAuditEvent[] {
+  return queryRows(
+    db,
+    [
+      "SELECT",
+      "  actor_type AS actorType,",
+      "  actor_id AS actorId,",
+      "  run_id AS runId,",
+      "  task_id AS taskId,",
+      "  approval_id AS approvalId,",
+      "  entity_type AS entityType,",
+      "  entity_id AS entityId,",
+      "  action",
+      "FROM audit_events",
+      "ORDER BY rowid ASC",
+    ].join("\n"),
+  ) as PersistedAuditEvent[];
+}
+
 describe("@orqis/db migration SQL", () => {
   const migrationSql = loadMigrationSql();
 
@@ -88,6 +146,17 @@ describe("@orqis/db migration SQL", () => {
     for (const tableName of requiredTables) {
       expect(migrationSql).toContain(`CREATE TABLE \`${tableName}\``);
     }
+  });
+
+  it("adds singleton audit context support for mutation actor and run correlation", () => {
+    const auditContextTableSql = extractTableSql(migrationSql, "audit_context");
+
+    expect(auditContextTableSql).toContain(
+      "`scope` text PRIMARY KEY NOT NULL CHECK (`scope` = 'current')",
+    );
+    expect(auditContextTableSql).toContain("`actor_type` text NOT NULL");
+    expect(auditContextTableSql).toContain("`actor_id` text");
+    expect(auditContextTableSql).toContain("`correlation_run_id` text");
   });
 
   it("defines run lifecycle states and timeline indexes", () => {
@@ -238,6 +307,180 @@ describe("@orqis/db migration SQL", () => {
     expect(migrationSql).toContain(
       "SELECT RAISE(ABORT, 'audit_events is append-only');",
     );
+  });
+
+  it("adds audit-emission triggers for run/task/approval inserts and updates", () => {
+    const expectedTriggers = [
+      "runs_audit_insert",
+      "runs_audit_update",
+      "tasks_audit_insert",
+      "tasks_audit_update",
+      "approvals_audit_insert",
+      "approvals_audit_update",
+    ];
+
+    for (const triggerName of expectedTriggers) {
+      expect(migrationSql).toContain(`CREATE TRIGGER \`${triggerName}\``);
+    }
+
+    expect(migrationSql).toContain("'run.created'");
+    expect(migrationSql).toContain("'run.updated'");
+    expect(migrationSql).toContain("'task.created'");
+    expect(migrationSql).toContain("'task.updated'");
+    expect(migrationSql).toContain("'approval.created'");
+    expect(migrationSql).toContain("'approval.updated'");
+  });
+
+  it("emits audit events for run, task, and approval inserts and updates with actor and run correlation metadata", async () => {
+    await withDatabase((db) => {
+      db.run("INSERT INTO projects (id, slug, name) VALUES (?, ?, ?)", [
+        "p1",
+        "project-1",
+        "Project 1",
+      ]);
+      db.run("INSERT INTO workspaces (id, project_id, name) VALUES (?, ?, ?)", [
+        "w1",
+        "p1",
+        "Workspace 1",
+      ]);
+
+      setAuditContext(db, {
+        actorType: "system",
+        actorId: "bootstrap",
+        correlationRunId: null,
+      });
+      db.run(
+        "INSERT INTO runs (id, project_id, workspace_id, status) VALUES (?, ?, ?, ?)",
+        ["run_1", "p1", "w1", "planned"],
+      );
+
+      setAuditContext(db, {
+        actorType: "agent",
+        actorId: "pm",
+        correlationRunId: "run_1",
+      });
+      db.run(
+        "UPDATE runs SET status = ?, started_at = ?, updated_at = ? WHERE id = ?",
+        [
+          "running",
+          "2026-03-11T09:00:00.000Z",
+          "2026-03-11T09:00:00.000Z",
+          "run_1",
+        ],
+      );
+      db.run(
+        "INSERT INTO tasks (id, project_id, workspace_id, title, state) VALUES (?, ?, ?, ?, ?)",
+        ["task_1", "p1", "w1", "Audit me", "todo"],
+      );
+
+      setAuditContext(db, {
+        actorType: "agent",
+        actorId: "backend_agent",
+        correlationRunId: "run_1",
+      });
+      db.run(
+        "UPDATE tasks SET state = ?, lock_owner_type = ?, lock_owner_id = ?, checkout_run_id = ?, execution_run_id = ?, updated_at = ? WHERE id = ?",
+        [
+          "in_progress",
+          "agent",
+          "backend_agent",
+          "run_1",
+          "run_1",
+          "2026-03-11T09:05:00.000Z",
+          "task_1",
+        ],
+      );
+
+      setAuditContext(db, {
+        actorType: "agent",
+        actorId: "pm",
+        correlationRunId: "run_1",
+      });
+      db.run(
+        "INSERT INTO approvals (id, project_id, workspace_id, task_id, run_id, status, requested_by_actor_type, requested_by_actor_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ["approval_1", "p1", "w1", "task_1", "run_1", "pending", "agent", "pm"],
+      );
+
+      setAuditContext(db, {
+        actorType: "user",
+        actorId: "owner",
+        correlationRunId: "run_1",
+      });
+      db.run(
+        "UPDATE approvals SET status = ?, decision_by_actor_type = ?, decision_by_actor_id = ?, decided_at = ?, updated_at = ? WHERE id = ?",
+        [
+          "approved",
+          "user",
+          "owner",
+          "2026-03-11T09:10:00.000Z",
+          "2026-03-11T09:10:00.000Z",
+          "approval_1",
+        ],
+      );
+
+      expect(readAuditEvents(db)).toEqual([
+        {
+          actorType: "system",
+          actorId: "bootstrap",
+          runId: "run_1",
+          taskId: null,
+          approvalId: null,
+          entityType: "run",
+          entityId: "run_1",
+          action: "run.created",
+        },
+        {
+          actorType: "agent",
+          actorId: "pm",
+          runId: "run_1",
+          taskId: null,
+          approvalId: null,
+          entityType: "run",
+          entityId: "run_1",
+          action: "run.updated",
+        },
+        {
+          actorType: "agent",
+          actorId: "pm",
+          runId: "run_1",
+          taskId: "task_1",
+          approvalId: null,
+          entityType: "task",
+          entityId: "task_1",
+          action: "task.created",
+        },
+        {
+          actorType: "agent",
+          actorId: "backend_agent",
+          runId: "run_1",
+          taskId: "task_1",
+          approvalId: null,
+          entityType: "task",
+          entityId: "task_1",
+          action: "task.updated",
+        },
+        {
+          actorType: "agent",
+          actorId: "pm",
+          runId: "run_1",
+          taskId: "task_1",
+          approvalId: "approval_1",
+          entityType: "approval",
+          entityId: "approval_1",
+          action: "approval.created",
+        },
+        {
+          actorType: "user",
+          actorId: "owner",
+          runId: "run_1",
+          taskId: "task_1",
+          approvalId: "approval_1",
+          entityType: "approval",
+          entityId: "approval_1",
+          action: "approval.updated",
+        },
+      ]);
+    });
   });
 
   it("rejects cross-project workspace mismatches across workflow tables", async () => {

@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Add regression tests proving all task/approval/run mutations emit audit events with actor and run correlation metadata.
+Add migration regression coverage for `messages`/`tasks`/`approvals` update-path guards so same-project/workspace linked ref triggers are verified on updates, not only inserts.
 
 ## Completed
 
@@ -166,7 +166,10 @@ Must finish before Phase 3:
   - Summary: Added a repository-backed core approval-guarded transition service that owns task/run state mutations and blocks guarded transitions from leaving `waiting_approval` while related approvals remain unresolved.
   - Summary (follow-up): Added regression coverage against the public transition API for task and run mutations with `pending`/`resubmitted` approvals plus resolved approval pass-through for approval-driven retry/completion paths.
   - Changed: `packages/core/src/approval-guarded-transition-service.ts`, `packages/core/src/index.ts`, `packages/core/test/approval-guarded-transition-service.test.ts`, `TODO.md`.
-- [ ] Add regression tests proving all task/approval/run mutations emit audit events with actor and run correlation metadata
+- [x] Add regression tests proving all task/approval/run mutations emit audit events with actor and run correlation metadata
+  - Summary: Added migration-backed audit-event triggers for run/task/approval inserts and updates, plus executable regression coverage that proves emitted events carry actor metadata and run correlation.
+  - Summary (follow-up): Added a singleton `audit_context` persistence contract so workflow mutations can stamp explicit actor/run correlation into emitted audit events without coupling audit rows to mutable parents.
+  - Changed: `packages/db/migrations/0001_project_workspace_schema.sql`, `packages/db/src/schema.ts`, `packages/db/test/migrations.test.ts`, `TODO.md`.
 - [ ] Add migration regression coverage for `messages`/`tasks`/`approvals` update-path guards so same-project/workspace linked ref triggers are verified on updates, not only inserts
 - [ ] Add web-runtime auth regression coverage for session lifecycle edges (`DELETE /api/session` cookie clearing, authenticated `GET /login` redirect, and unauthorized `GET/POST /api/workspaces/:workspaceId/messages`)
 - [ ] Harden local session cookie/auth response headers for tunnel exposure (`Secure` cookie behavior when request origin is HTTPS and `Cache-Control: no-store` on auth-sensitive HTML/API responses)
