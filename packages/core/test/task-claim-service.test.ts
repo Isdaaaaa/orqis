@@ -309,6 +309,32 @@ describe("task claim service", () => {
     } satisfies Partial<TaskClaimConflictError>);
   });
 
+  it("returns a deterministic concurrent-update conflict after repeated compare-and-swap misses", async () => {
+    const repository = new InMemoryTaskClaimRepository([createTask()]);
+    let compareAttempts = 0;
+    repository.onCompareAndSwap = () => {
+      compareAttempts += 1;
+      return false;
+    };
+
+    const service = createTaskClaimService(repository);
+
+    await expect(
+      service.claimTaskExecution({
+        taskId: "task_1",
+        runId: "run_1",
+        ownerType: "agent",
+        ownerId: "backend_agent",
+      }),
+    ).rejects.toMatchObject({
+      code: "task_claim_concurrent_update",
+      currentExecutionRunId: null,
+      currentCheckoutRunId: null,
+    } satisfies Partial<TaskClaimConflictError>);
+
+    expect(compareAttempts).toBe(3);
+  });
+
   it("releases the execution claim when the same run and owner release it", async () => {
     const repository = new InMemoryTaskClaimRepository([
       createTask({
@@ -332,6 +358,11 @@ describe("task claim service", () => {
     expect(released).toEqual(
       createTask({
         state: "in_progress",
+        lockOwnerType: "agent",
+        lockOwnerId: "backend_agent",
+        lockAcquiredAt: "2026-03-11T01:02:03.000Z",
+        checkoutRunId: "run_1",
+        executionRunId: null,
       }),
     );
   });

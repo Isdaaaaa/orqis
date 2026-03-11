@@ -21,6 +21,7 @@ export const TASK_CLAIM_CONFLICT_CODES = [
   "task_execution_locked",
   "task_checked_out_by_another_run",
   "task_owned_by_another_actor",
+  "task_claim_concurrent_update",
 ] as const;
 export type TaskClaimConflictCode = (typeof TASK_CLAIM_CONFLICT_CODES)[number];
 
@@ -117,6 +118,8 @@ function describeConflict(
       return `Task "${task.id}" is already checked out by run "${task.checkoutRunId}".`;
     case "task_owned_by_another_actor":
       return `Task "${task.id}" is already owned by ${task.lockOwnerType ?? "unknown"} "${task.lockOwnerId ?? "unknown"}".`;
+    case "task_claim_concurrent_update":
+      return `Task "${task.id}" changed during repeated concurrent claim attempts.`;
   }
 }
 
@@ -273,10 +276,10 @@ function buildClaimSnapshot(
 function buildReleasedSnapshot(task: TaskClaimRecord): TaskClaimSnapshot {
   return {
     state: task.state,
-    lockOwnerType: null,
-    lockOwnerId: null,
-    lockAcquiredAt: null,
-    checkoutRunId: null,
+    lockOwnerType: task.lockOwnerType,
+    lockOwnerId: task.lockOwnerId,
+    lockAcquiredAt: task.lockAcquiredAt,
+    checkoutRunId: task.checkoutRunId,
     executionRunId: null,
   };
 }
@@ -382,9 +385,13 @@ class DefaultTaskClaimService implements TaskClaimService {
       }
     }
 
-    throw new TaskClaimValidationError(
-      `Task "${taskId}" could not be updated because its claim state changed too many times.`,
-    );
+    const finalNext = buildNextSnapshot(current);
+
+    if (snapshotsEqual(toSnapshot(current), finalNext)) {
+      return current;
+    }
+
+    throw new TaskClaimConflictError("task_claim_concurrent_update", current);
   }
 }
 
