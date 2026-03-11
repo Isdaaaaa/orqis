@@ -731,6 +731,147 @@ describe("@orqis/db migration SQL", () => {
     });
   });
 
+  it("rejects linked run/task refs on updates when existing rows cross project/workspace boundaries", async () => {
+    await withDatabase((db) => {
+      db.run("INSERT INTO projects (id, slug, name) VALUES (?, ?, ?)", [
+        "p1",
+        "project-1",
+        "Project 1",
+      ]);
+      db.run("INSERT INTO projects (id, slug, name) VALUES (?, ?, ?)", [
+        "p2",
+        "project-2",
+        "Project 2",
+      ]);
+      db.run("INSERT INTO workspaces (id, project_id, name) VALUES (?, ?, ?)", [
+        "w1",
+        "p1",
+        "Workspace 1",
+      ]);
+      db.run("INSERT INTO workspaces (id, project_id, name) VALUES (?, ?, ?)", [
+        "w2",
+        "p2",
+        "Workspace 2",
+      ]);
+      db.run(
+        "INSERT INTO runs (id, project_id, workspace_id, status) VALUES (?, ?, ?, ?)",
+        ["r1", "p1", "w1", "planned"],
+      );
+      db.run(
+        "INSERT INTO runs (id, project_id, workspace_id, status) VALUES (?, ?, ?, ?)",
+        ["r2", "p2", "w2", "planned"],
+      );
+      db.run(
+        "INSERT INTO tasks (id, project_id, workspace_id, title, state) VALUES (?, ?, ?, ?, ?)",
+        ["t1", "p1", "w1", "Task 1", "todo"],
+      );
+      db.run(
+        "INSERT INTO tasks (id, project_id, workspace_id, title, state) VALUES (?, ?, ?, ?, ?)",
+        ["t2", "p2", "w2", "Task 2", "todo"],
+      );
+      db.run(
+        "INSERT INTO messages (id, project_id, workspace_id, run_id, actor_type, content) VALUES (?, ?, ?, ?, ?, ?)",
+        ["m_update_run", "p1", "w1", "r1", "user", "message"],
+      );
+      db.run(
+        "INSERT INTO messages (id, project_id, workspace_id, run_id, actor_type, content) VALUES (?, ?, ?, ?, ?, ?)",
+        ["m_update_owner", "p1", "w1", "r1", "user", "message"],
+      );
+      db.run(
+        "INSERT INTO tasks (id, project_id, workspace_id, run_id, title, state) VALUES (?, ?, ?, ?, ?, ?)",
+        ["t_update_run", "p1", "w1", "r1", "Task run", "todo"],
+      );
+      db.run(
+        "INSERT INTO tasks (id, project_id, workspace_id, checkout_run_id, title, state) VALUES (?, ?, ?, ?, ?, ?)",
+        ["t_update_checkout", "p1", "w1", "r1", "Task checkout", "todo"],
+      );
+      db.run(
+        "INSERT INTO tasks (id, project_id, workspace_id, execution_run_id, title, state) VALUES (?, ?, ?, ?, ?, ?)",
+        ["t_update_execution", "p1", "w1", "r1", "Task execution", "todo"],
+      );
+      db.run(
+        "INSERT INTO tasks (id, project_id, workspace_id, run_id, title, state) VALUES (?, ?, ?, ?, ?, ?)",
+        ["t_update_owner", "p1", "w1", "r1", "Task owner", "todo"],
+      );
+      db.run(
+        "INSERT INTO approvals (id, project_id, workspace_id, task_id, status, requested_by_actor_type) VALUES (?, ?, ?, ?, ?, ?)",
+        ["a_update_task", "p1", "w1", "t1", "pending", "user"],
+      );
+      db.run(
+        "INSERT INTO approvals (id, project_id, workspace_id, task_id, run_id, status, requested_by_actor_type) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ["a_update_run", "p1", "w1", "t1", "r1", "pending", "user"],
+      );
+      db.run(
+        "INSERT INTO approvals (id, project_id, workspace_id, task_id, run_id, status, requested_by_actor_type) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ["a_update_owner", "p1", "w1", "t1", "r1", "pending", "user"],
+      );
+
+      expect(() =>
+        db.run("UPDATE messages SET run_id = ? WHERE id = ?", ["r2", "m_update_run"]),
+      ).toThrow(/messages\.run_id must reference a run in the same project\/workspace/);
+
+      expect(() =>
+        db.run(
+          "UPDATE messages SET project_id = ?, workspace_id = ? WHERE id = ?",
+          ["p2", "w2", "m_update_owner"],
+        ),
+      ).toThrow(/messages\.run_id must reference a run in the same project\/workspace/);
+
+      expect(() =>
+        db.run("UPDATE tasks SET run_id = ? WHERE id = ?", ["r2", "t_update_run"]),
+      ).toThrow(/tasks\.run_id must reference a run in the same project\/workspace/);
+
+      expect(() =>
+        db.run("UPDATE tasks SET checkout_run_id = ? WHERE id = ?", [
+          "r2",
+          "t_update_checkout",
+        ]),
+      ).toThrow(
+        /tasks\.checkout_run_id must reference a run in the same project\/workspace/,
+      );
+
+      expect(() =>
+        db.run("UPDATE tasks SET execution_run_id = ? WHERE id = ?", [
+          "r2",
+          "t_update_execution",
+        ]),
+      ).toThrow(
+        /tasks\.execution_run_id must reference a run in the same project\/workspace/,
+      );
+
+      expect(() =>
+        db.run(
+          "UPDATE tasks SET project_id = ?, workspace_id = ? WHERE id = ?",
+          ["p2", "w2", "t_update_owner"],
+        ),
+      ).toThrow(/tasks\.run_id must reference a run in the same project\/workspace/);
+
+      expect(() =>
+        db.run("UPDATE approvals SET task_id = ? WHERE id = ?", [
+          "t2",
+          "a_update_task",
+        ]),
+      ).toThrow(
+        /approvals\.task_id must reference a task in the same project\/workspace/,
+      );
+
+      expect(() =>
+        db.run("UPDATE approvals SET run_id = ? WHERE id = ?", ["r2", "a_update_run"]),
+      ).toThrow(
+        /approvals\.run_id must reference a run in the same project\/workspace/,
+      );
+
+      expect(() =>
+        db.run(
+          "UPDATE approvals SET project_id = ?, workspace_id = ? WHERE id = ?",
+          ["p2", "w2", "a_update_owner"],
+        ),
+      ).toThrow(
+        /approvals\.task_id must reference a task in the same project\/workspace/,
+      );
+    });
+  });
+
   it("rejects parent lineage refs that point outside the row project/workspace", async () => {
     await withDatabase((db) => {
       db.run("INSERT INTO projects (id, slug, name) VALUES (?, ?, ?)", [
