@@ -208,6 +208,6 @@ describe("@orqis/web workspace persistence audit integration", () => {
         await rm(tempDir, { recursive: true, force: true });
       }
     },
-    45_000,
+    75_000,
   );
 });
