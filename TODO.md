@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Add web-runtime auth regression coverage for session lifecycle edges (`DELETE /api/session` cookie clearing, authenticated `GET /login` redirect, and unauthorized `GET/POST /api/workspaces/:workspaceId/messages`).
+Harden local session cookie/auth response headers for tunnel exposure (`Secure` cookie behavior when request origin is HTTPS and `Cache-Control: no-store` on auth-sensitive HTML/API responses).
 
 ## Completed
 
@@ -180,7 +180,9 @@ Must finish before Phase 3:
   - Summary: Added executable migration regression coverage for `messages`, `tasks`, and `approvals` update-path guard failures when linked `run_id`/`task_id` refs are changed to a different project/workspace after insert.
   - Summary (follow-up): Added ownership-update regression coverage proving the same linked-ref triggers still reject cross-project/workspace mismatches when an existing row is moved instead of re-linked.
   - Changed: `packages/db/test/migrations.test.ts`, `TODO.md`.
-- [ ] Add web-runtime auth regression coverage for session lifecycle edges (`DELETE /api/session` cookie clearing, authenticated `GET /login` redirect, and unauthorized `GET/POST /api/workspaces/:workspaceId/messages`)
+- [x] Add web-runtime auth regression coverage for session lifecycle edges (`DELETE /api/session` cookie clearing, authenticated `GET /login` redirect, and unauthorized `GET/POST /api/workspaces/:workspaceId/messages`)
+  - Summary: Added focused web-runtime auth regression coverage for authenticated `/login` redirects, `DELETE /api/session` cookie clearing plus session invalidation, and unauthorized `GET`/`POST` workspace-message API requests.
+  - Changed: `apps/web/test/runtime.test.ts`, `TODO.md`.
 - [ ] Harden local session cookie/auth response headers for tunnel exposure (`Secure` cookie behavior when request origin is HTTPS and `Cache-Control: no-store` on auth-sensitive HTML/API responses)
 
 Safe to defer:
