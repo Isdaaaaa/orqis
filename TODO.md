@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Add regression tests proving all task/approval/run mutations emit audit events with actor and run correlation metadata.
+Add migration regression coverage for `messages`/`tasks`/`approvals` update-path guards so same-project/workspace linked ref triggers are verified on updates, not only inserts.
 
 ## Completed
 
@@ -68,7 +68,10 @@ Safe to defer while Phase 2 starts:
 - [ ] Tighten `orqis init --health-timeout-ms` validation to reject non-numeric suffix input (for example `10abc`)
 - [ ] Add CLI regression coverage that asserts `--health-timeout-ms` rejects non-numeric suffix input (for example `10abc`)
 - [ ] Add signal-shutdown test coverage for `waitForRuntimeShutdown` (listener cleanup and runtime stop invocation)
-- [ ] Harden the `orqis init` smoke test against reserved-port race conditions (avoid probe-release-then-bind assumptions)
+- [x] Harden the `orqis init` smoke test against reserved-port race conditions (avoid probe-release-then-bind assumptions)
+  - Summary: Reworked the CLI smoke test to boot the real web runtime on an ephemeral port through the injected runtime dependency, eliminating the probe-release-then-bind race under `pnpm -r test`.
+  - Summary (follow-up): Widened the real-runtime smoke-test timeout budget so the CLI workspace-load path remains stable under the default `pnpm -r test` command after removing the reserved-port probe.
+  - Changed: `apps/cli/test/init.test.ts`, `TODO.md`.
 - [ ] Add an integration test that runs the real `apps/web/src/runtime-process.ts` entrypoint and asserts IPC ready/start-error messages plus graceful shutdown on parent disconnect
 - [ ] Add tunnel stop lifecycle regression coverage for the race where a child process exits between `hasExited` checks and stop-listener attachment
 
@@ -165,8 +168,14 @@ Must finish before Phase 3:
 - [x] Add regression tests proving guarded task/run transitions are blocked until required approvals are resolved
   - Summary: Added a repository-backed core approval-guarded transition service that owns task/run state mutations and blocks guarded transitions from leaving `waiting_approval` while related approvals remain unresolved.
   - Summary (follow-up): Added regression coverage against the public transition API for task and run mutations with `pending`/`resubmitted` approvals plus resolved approval pass-through for approval-driven retry/completion paths.
+  - Summary (follow-up): Tightened transition semantics so stale `from` requests now raise deterministic conflicts even when the entity already equals the requested target state.
   - Changed: `packages/core/src/approval-guarded-transition-service.ts`, `packages/core/src/index.ts`, `packages/core/test/approval-guarded-transition-service.test.ts`, `TODO.md`.
-- [ ] Add regression tests proving all task/approval/run mutations emit audit events with actor and run correlation metadata
+- [x] Add regression tests proving all task/approval/run mutations emit audit events with actor and run correlation metadata
+  - Summary: Added migration-backed audit-event triggers for run/task/approval inserts and updates, plus executable regression coverage that proves emitted events carry actor metadata and run correlation.
+  - Summary (follow-up): Replaced the shared `audit_context` table with connection-local audit SQL functions and scoped test contexts so actor metadata cannot leak across unrelated mutations.
+  - Summary (follow-up): Registered the audit SQL functions on the real web-runtime `better-sqlite3` connection and added a runtime-level regression so task/run/approval writes no longer pass only in the `sql.js` harness.
+  - Summary (follow-up): Widened the slow web integration-test timeout budgets so the new real-SQLite audit regression stays stable during branch-level parallel validation instead of timing out under worker contention.
+  - Changed: `packages/db/migrations/0001_project_workspace_schema.sql`, `packages/db/src/audit-sql-context.ts`, `packages/db/src/index.ts`, `packages/db/src/schema.ts`, `packages/db/test/migrations.test.ts`, `apps/web/src/persistence.ts`, `apps/web/test/persistence-audit.test.ts`, `apps/web/test/runtime.test.ts`, `apps/web/test/timeline-persistence.test.ts`, `TODO.md`.
 - [ ] Add migration regression coverage for `messages`/`tasks`/`approvals` update-path guards so same-project/workspace linked ref triggers are verified on updates, not only inserts
 - [ ] Add web-runtime auth regression coverage for session lifecycle edges (`DELETE /api/session` cookie clearing, authenticated `GET /login` redirect, and unauthorized `GET/POST /api/workspaces/:workspaceId/messages`)
 - [ ] Harden local session cookie/auth response headers for tunnel exposure (`Secure` cookie behavior when request origin is HTTPS and `Cache-Control: no-store` on auth-sensitive HTML/API responses)

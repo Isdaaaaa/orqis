@@ -345,4 +345,52 @@ describe("approval guarded transition service", () => {
       currentValue: "blocked",
     } satisfies Partial<ApprovalGuardedTransitionConflictError>);
   });
+
+  it("rejects stale task transitions even when the task already equals the requested target state", async () => {
+    const repository = new InMemoryApprovalGuardedTransitionRepository({
+      tasks: [createTask({ state: "done" })],
+    });
+    const service = createApprovalGuardedTransitionService(repository);
+
+    await expect(
+      service.transitionTask({
+        taskId: "task_1",
+        from: "waiting_approval",
+        to: "done",
+      }),
+    ).rejects.toMatchObject({
+      code: "task_transition_concurrent_update",
+      entityType: "task",
+      entityId: "task_1",
+      expectedFrom: "waiting_approval",
+      targetTo: "done",
+      currentValue: "done",
+    } satisfies Partial<ApprovalGuardedTransitionConflictError>);
+
+    expect(repository.compareAndSwapTaskCalls).toBe(0);
+  });
+
+  it("rejects stale run transitions even when the run already equals the requested target status", async () => {
+    const repository = new InMemoryApprovalGuardedTransitionRepository({
+      runs: [createRun({ status: "running" })],
+    });
+    const service = createApprovalGuardedTransitionService(repository);
+
+    await expect(
+      service.transitionRun({
+        runId: "run_1",
+        from: "waiting_approval",
+        to: "running",
+      }),
+    ).rejects.toMatchObject({
+      code: "run_transition_concurrent_update",
+      entityType: "run",
+      entityId: "run_1",
+      expectedFrom: "waiting_approval",
+      targetTo: "running",
+      currentValue: "running",
+    } satisfies Partial<ApprovalGuardedTransitionConflictError>);
+
+    expect(repository.compareAndSwapRunCalls).toBe(0);
+  });
 });
