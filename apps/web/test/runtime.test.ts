@@ -72,6 +72,15 @@ function withSessionCookie(
   };
 }
 
+async function expectAuthenticationRequiredResponse(
+  response: Response,
+): Promise<void> {
+  const body = (await response.json()) as { error?: string };
+
+  expect(response.status).toBe(401);
+  expect(body.error).toBe("Authentication required.");
+}
+
 describe("@orqis/web runtime", () => {
   it(
     "serves a health endpoint and enforces local session auth before loading the workspace shell",
@@ -157,6 +166,99 @@ describe("@orqis/web runtime", () => {
         });
 
         expect(refreshedLandingResponse.status).toBe(200);
+      } finally {
+        await runtime.stop();
+        await cleanup();
+      }
+    },
+    75_000,
+  );
+
+  it(
+    "covers auth session lifecycle edges for login redirect, logout cookie clearing, and workspace message protection",
+    async () => {
+      const { databaseFilePath, cleanup } = await createRuntimeDatabaseFilePath();
+      const runtime = await startOrqisWebRuntime({
+        host: "127.0.0.1",
+        port: 0,
+        persistence: {
+          databaseFilePath,
+        },
+      });
+
+      try {
+        const workspaceMessagesUrl =
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent("workspace-edge")}/messages`;
+
+        await expectAuthenticationRequiredResponse(
+          await fetch(workspaceMessagesUrl),
+        );
+
+        await expectAuthenticationRequiredResponse(
+          await fetch(workspaceMessagesUrl, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({
+              projectId: "project-edge",
+              actorType: "user",
+              actorId: "owner",
+              content: "Unauthorized message",
+            }),
+          }),
+        );
+
+        const sessionCookie = await createSessionCookie(runtime.baseUrl, "owner");
+
+        const authenticatedLoginResponse = await fetch(`${runtime.baseUrl}/login`, {
+          headers: withSessionCookie(sessionCookie),
+          redirect: "manual",
+        });
+
+        expect(authenticatedLoginResponse.status).toBe(302);
+        expect(authenticatedLoginResponse.headers.get("location")).toBe("/");
+
+        const deleteSessionResponse = await fetch(`${runtime.baseUrl}/api/session`, {
+          method: "DELETE",
+          headers: withSessionCookie(sessionCookie),
+        });
+        const deleteSessionBody = (await deleteSessionResponse.json()) as {
+          authenticated?: boolean;
+        };
+        const clearedSessionCookie = deleteSessionResponse.headers.get("set-cookie");
+
+        expect(deleteSessionResponse.status).toBe(200);
+        expect(deleteSessionBody).toEqual({
+          authenticated: false,
+        });
+        expect(clearedSessionCookie).toContain("orqis_session=");
+        expect(clearedSessionCookie).toContain("Path=/");
+        expect(clearedSessionCookie).toContain("Max-Age=0");
+        expect(clearedSessionCookie).toContain("HttpOnly");
+        expect(clearedSessionCookie).toContain("SameSite=Lax");
+
+        const postDeleteSessionResponse = await fetch(`${runtime.baseUrl}/api/session`, {
+          headers: withSessionCookie(sessionCookie),
+        });
+        const postDeleteSessionBody = (await postDeleteSessionResponse.json()) as {
+          authenticated?: boolean;
+          session?: null;
+        };
+
+        expect(postDeleteSessionResponse.status).toBe(200);
+        expect(postDeleteSessionBody).toEqual({
+          authenticated: false,
+          session: null,
+        });
+
+        const postDeleteLandingResponse = await fetch(runtime.baseUrl, {
+          headers: withSessionCookie(sessionCookie),
+          redirect: "manual",
+        });
+
+        expect(postDeleteLandingResponse.status).toBe(302);
+        expect(postDeleteLandingResponse.headers.get("location")).toBe("/login");
       } finally {
         await runtime.stop();
         await cleanup();
