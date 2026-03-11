@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Add migration regression coverage for `messages`/`tasks`/`approvals` update-path guards so same-project/workspace linked ref triggers are verified on updates, not only inserts.
+Add web-runtime auth regression coverage for session lifecycle edges (`DELETE /api/session` cookie clearing, authenticated `GET /login` redirect, and unauthorized `GET/POST /api/workspaces/:workspaceId/messages`).
 
 ## Completed
 
@@ -176,7 +176,10 @@ Must finish before Phase 3:
   - Summary (follow-up): Registered the audit SQL functions on the real web-runtime `better-sqlite3` connection and added a runtime-level regression so task/run/approval writes no longer pass only in the `sql.js` harness.
   - Summary (follow-up): Widened the slow web integration-test timeout budgets so the new real-SQLite audit regression stays stable during branch-level parallel validation instead of timing out under worker contention.
   - Changed: `packages/db/migrations/0001_project_workspace_schema.sql`, `packages/db/src/audit-sql-context.ts`, `packages/db/src/index.ts`, `packages/db/src/schema.ts`, `packages/db/test/migrations.test.ts`, `apps/web/src/persistence.ts`, `apps/web/test/persistence-audit.test.ts`, `apps/web/test/runtime.test.ts`, `apps/web/test/timeline-persistence.test.ts`, `TODO.md`.
-- [ ] Add migration regression coverage for `messages`/`tasks`/`approvals` update-path guards so same-project/workspace linked ref triggers are verified on updates, not only inserts
+- [x] Add migration regression coverage for `messages`/`tasks`/`approvals` update-path guards so same-project/workspace linked ref triggers are verified on updates, not only inserts
+  - Summary: Added executable migration regression coverage for `messages`, `tasks`, and `approvals` update-path guard failures when linked `run_id`/`task_id` refs are changed to a different project/workspace after insert.
+  - Summary (follow-up): Added ownership-update regression coverage proving the same linked-ref triggers still reject cross-project/workspace mismatches when an existing row is moved instead of re-linked.
+  - Changed: `packages/db/test/migrations.test.ts`, `TODO.md`.
 - [ ] Add web-runtime auth regression coverage for session lifecycle edges (`DELETE /api/session` cookie clearing, authenticated `GET /login` redirect, and unauthorized `GET/POST /api/workspaces/:workspaceId/messages`)
 - [ ] Harden local session cookie/auth response headers for tunnel exposure (`Secure` cookie behavior when request origin is HTTPS and `Cache-Control: no-store` on auth-sensitive HTML/API responses)
 
