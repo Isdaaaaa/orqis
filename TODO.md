@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Start Phase 3 with service-level task claim/ownership invariants (single active execution lock and deterministic conflict errors).
+Add regression tests proving guarded task/run transitions are blocked until required approvals are resolved.
 
 ## Completed
 
@@ -157,7 +157,11 @@ Safe to defer while Phase 2 starts:
 #### Hardening before Phase 3
 
 Must finish before Phase 3:
-- [ ] Enforce task claim/ownership invariants at service level (single active execution lock per task and deterministic conflict errors)
+- [x] Enforce task claim/ownership invariants at service level (single active execution lock per task and deterministic conflict errors)
+  - Summary: Added a core task-claim service with compare-and-swap claim/release operations, explicit claimable-state enforcement, and typed deterministic conflict errors for execution-lock, checkout, and owner collisions.
+  - Summary (follow-up): Added regression coverage for idempotent reclaims, release behavior, and compare-and-swap race reclassification so concurrent lock contention resolves to stable conflict codes instead of generic concurrency failures.
+  - Summary (follow-up): Narrowed execution release to preserve checkout ownership metadata and replaced the retry-limit fallback with a typed concurrent-update conflict when compare-and-swap contention never settles.
+  - Changed: `packages/core/src/task-claim-service.ts`, `packages/core/src/index.ts`, `packages/core/test/task-claim-service.test.ts`, `TODO.md`.
 - [ ] Add regression tests proving guarded task/run transitions are blocked until required approvals are resolved
 - [ ] Add regression tests proving all task/approval/run mutations emit audit events with actor and run correlation metadata
 - [ ] Add migration regression coverage for `messages`/`tasks`/`approvals` update-path guards so same-project/workspace linked ref triggers are verified on updates, not only inserts

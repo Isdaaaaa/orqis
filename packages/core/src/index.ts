@@ -7,3 +7,4 @@ export function createInitialRunStatus(): RunStatus {
 }
 
 export * from "./specialist-agent-adapter-registry.js";
+export * from "./task-claim-service.js";
