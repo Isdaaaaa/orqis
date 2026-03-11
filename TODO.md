@@ -163,8 +163,8 @@ Must finish before Phase 3:
   - Summary (follow-up): Narrowed execution release to preserve checkout ownership metadata and replaced the retry-limit fallback with a typed concurrent-update conflict when compare-and-swap contention never settles.
   - Changed: `packages/core/src/task-claim-service.ts`, `packages/core/src/index.ts`, `packages/core/test/task-claim-service.test.ts`, `TODO.md`.
 - [x] Add regression tests proving guarded task/run transitions are blocked until required approvals are resolved
-  - Summary: Added a core approval-guarded transition service that blocks guarded task/run transitions from leaving `waiting_approval` while related approvals remain unresolved.
-  - Summary (follow-up): Added regression coverage for task and run transitions with `pending`/`resubmitted` approvals plus resolved approval pass-through for approval-driven retry/completion paths.
+  - Summary: Added a repository-backed core approval-guarded transition service that owns task/run state mutations and blocks guarded transitions from leaving `waiting_approval` while related approvals remain unresolved.
+  - Summary (follow-up): Added regression coverage against the public transition API for task and run mutations with `pending`/`resubmitted` approvals plus resolved approval pass-through for approval-driven retry/completion paths.
   - Changed: `packages/core/src/approval-guarded-transition-service.ts`, `packages/core/src/index.ts`, `packages/core/test/approval-guarded-transition-service.test.ts`, `TODO.md`.
 - [ ] Add regression tests proving all task/approval/run mutations emit audit events with actor and run correlation metadata
 - [ ] Add migration regression coverage for `messages`/`tasks`/`approvals` update-path guards so same-project/workspace linked ref triggers are verified on updates, not only inserts

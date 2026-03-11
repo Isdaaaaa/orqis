@@ -1,3 +1,5 @@
+type Awaitable<T> = T | Promise<T>;
+
 export const APPROVAL_GUARDED_TASK_STATES = [
   "todo",
   "in_progress",
@@ -43,24 +45,97 @@ export interface ApprovalGuardRecord {
   readonly runId: string | null;
 }
 
-export interface TaskTransitionGuardInput {
+export interface ApprovalGuardedTaskRecord {
+  readonly id: string;
+  readonly state: ApprovalGuardedTaskState;
+}
+
+export interface ApprovalGuardedRunRecord {
+  readonly id: string;
+  readonly status: ApprovalGuardedRunStatus;
+}
+
+export interface TaskTransitionInput {
   readonly taskId: string;
   readonly from: ApprovalGuardedTaskState;
   readonly to: ApprovalGuardedTaskState;
-  readonly approvals: readonly ApprovalGuardRecord[];
 }
 
-export interface RunTransitionGuardInput {
+export interface RunTransitionInput {
   readonly runId: string;
   readonly from: ApprovalGuardedRunStatus;
   readonly to: ApprovalGuardedRunStatus;
-  readonly approvals: readonly ApprovalGuardRecord[];
+}
+
+export interface ApprovalGuardedTransitionRepository {
+  getTask(taskId: string): Awaitable<ApprovalGuardedTaskRecord | undefined>;
+  getRun(runId: string): Awaitable<ApprovalGuardedRunRecord | undefined>;
+  listTaskApprovals(taskId: string): Awaitable<readonly ApprovalGuardRecord[]>;
+  listRunApprovals(runId: string): Awaitable<readonly ApprovalGuardRecord[]>;
+  compareAndSwapTaskState(
+    taskId: string,
+    expected: ApprovalGuardedTaskState,
+    next: ApprovalGuardedTaskState,
+  ): Awaitable<boolean>;
+  compareAndSwapRunStatus(
+    runId: string,
+    expected: ApprovalGuardedRunStatus,
+    next: ApprovalGuardedRunStatus,
+  ): Awaitable<boolean>;
 }
 
 export class ApprovalGuardedTransitionValidationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = new.target.name;
+  }
+}
+
+export class ApprovalGuardedTransitionNotFoundError extends Error {
+  readonly entityType: "task" | "run";
+  readonly entityId: string;
+
+  constructor(entityType: "task" | "run", entityId: string) {
+    super(`${capitalize(entityType)} "${entityId}" was not found.`);
+    this.name = new.target.name;
+    this.entityType = entityType;
+    this.entityId = entityId;
+  }
+}
+
+export const APPROVAL_GUARDED_TRANSITION_CONFLICT_CODES = [
+  "task_transition_concurrent_update",
+  "run_transition_concurrent_update",
+] as const;
+export type ApprovalGuardedTransitionConflictCode =
+  (typeof APPROVAL_GUARDED_TRANSITION_CONFLICT_CODES)[number];
+
+export class ApprovalGuardedTransitionConflictError extends Error {
+  readonly code: ApprovalGuardedTransitionConflictCode;
+  readonly entityType: "task" | "run";
+  readonly entityId: string;
+  readonly expectedFrom: string;
+  readonly targetTo: string;
+  readonly currentValue: string;
+
+  constructor(input: {
+    code: ApprovalGuardedTransitionConflictCode;
+    entityType: "task" | "run";
+    entityId: string;
+    expectedFrom: string;
+    targetTo: string;
+    currentValue: string;
+  }) {
+    super(
+      `${capitalize(input.entityType)} "${input.entityId}" changed from expected "${input.expectedFrom}" to "${input.currentValue}" before transition to "${input.targetTo}" could be applied.`,
+    );
+    this.name = new.target.name;
+    this.code = input.code;
+    this.entityType = input.entityType;
+    this.entityId = input.entityId;
+    this.expectedFrom = input.expectedFrom;
+    this.targetTo = input.targetTo;
+    this.currentValue = input.currentValue;
   }
 }
 
@@ -92,8 +167,12 @@ export class ApprovalGuardedTransitionBlockedError extends Error {
 }
 
 export interface ApprovalGuardedTransitionService {
-  assertTaskTransitionAllowed(input: TaskTransitionGuardInput): void;
-  assertRunTransitionAllowed(input: RunTransitionGuardInput): void;
+  transitionTask(input: TaskTransitionInput): Promise<ApprovalGuardedTaskRecord>;
+  transitionRun(input: RunTransitionInput): Promise<ApprovalGuardedRunRecord>;
+}
+
+function capitalize(value: string): string {
+  return value.slice(0, 1).toUpperCase() + value.slice(1);
 }
 
 function normalizeRequiredString(value: string, label: string): string {
@@ -108,7 +187,9 @@ function normalizeRequiredString(value: string, label: string): string {
   return normalized;
 }
 
-function normalizeOptionalString(value: string | null | undefined): string | null {
+function normalizeOptionalString(
+  value: string | null | undefined,
+): string | null {
   if (value === null || value === undefined) {
     return null;
   }
@@ -117,7 +198,7 @@ function normalizeOptionalString(value: string | null | undefined): string | nul
 }
 
 function normalizeTaskState(state: string): ApprovalGuardedTaskState {
-  const normalized = normalizeRequiredString(state, "from/to");
+  const normalized = normalizeRequiredString(state, "task transition state");
 
   if (
     !(APPROVAL_GUARDED_TASK_STATES as readonly string[]).includes(normalized)
@@ -131,7 +212,7 @@ function normalizeTaskState(state: string): ApprovalGuardedTaskState {
 }
 
 function normalizeRunStatus(state: string): ApprovalGuardedRunStatus {
-  const normalized = normalizeRequiredString(state, "from/to");
+  const normalized = normalizeRequiredString(state, "run transition status");
 
   if (
     !(APPROVAL_GUARDED_RUN_STATUSES as readonly string[]).includes(normalized)
@@ -190,66 +271,214 @@ function findBlockingApprovals(
   });
 }
 
+async function getTaskOrThrow(
+  repository: ApprovalGuardedTransitionRepository,
+  taskId: string,
+): Promise<ApprovalGuardedTaskRecord> {
+  const task = await repository.getTask(taskId);
+
+  if (task === undefined) {
+    throw new ApprovalGuardedTransitionNotFoundError("task", taskId);
+  }
+
+  return {
+    ...task,
+    state: normalizeTaskState(task.state),
+  };
+}
+
+async function getRunOrThrow(
+  repository: ApprovalGuardedTransitionRepository,
+  runId: string,
+): Promise<ApprovalGuardedRunRecord> {
+  const run = await repository.getRun(runId);
+
+  if (run === undefined) {
+    throw new ApprovalGuardedTransitionNotFoundError("run", runId);
+  }
+
+  return {
+    ...run,
+    status: normalizeRunStatus(run.status),
+  };
+}
+
+function createConflictError(input: {
+  entityType: "task" | "run";
+  entityId: string;
+  expectedFrom: string;
+  targetTo: string;
+  currentValue: string;
+}): ApprovalGuardedTransitionConflictError {
+  return new ApprovalGuardedTransitionConflictError({
+    code:
+      input.entityType === "task"
+        ? "task_transition_concurrent_update"
+        : "run_transition_concurrent_update",
+    ...input,
+  });
+}
+
 class DefaultApprovalGuardedTransitionService
   implements ApprovalGuardedTransitionService
 {
-  assertTaskTransitionAllowed(input: TaskTransitionGuardInput): void {
-    const normalizedTaskId = normalizeRequiredString(input.taskId, "taskId");
-    const normalizedFrom = normalizeTaskState(input.from);
-    const normalizedTo = normalizeTaskState(input.to);
+  constructor(
+    private readonly repository: ApprovalGuardedTransitionRepository,
+  ) {}
 
-    if (!isGuardedTransition(normalizedFrom, normalizedTo)) {
-      return;
+  async transitionTask(
+    input: TaskTransitionInput,
+  ): Promise<ApprovalGuardedTaskRecord> {
+    const normalizedInput = {
+      taskId: normalizeRequiredString(input.taskId, "taskId"),
+      from: normalizeTaskState(input.from),
+      to: normalizeTaskState(input.to),
+    } satisfies TaskTransitionInput;
+
+    let current = await getTaskOrThrow(this.repository, normalizedInput.taskId);
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (current.state === normalizedInput.to) {
+        return current;
+      }
+
+      if (current.state !== normalizedInput.from) {
+        throw createConflictError({
+          entityType: "task",
+          entityId: normalizedInput.taskId,
+          expectedFrom: normalizedInput.from,
+          targetTo: normalizedInput.to,
+          currentValue: current.state,
+        });
+      }
+
+      const approvals = normalizeApprovals(
+        await this.repository.listTaskApprovals(normalizedInput.taskId),
+      );
+      const blockingApprovals = isGuardedTransition(
+        normalizedInput.from,
+        normalizedInput.to,
+      )
+        ? findBlockingApprovals(approvals, "task", normalizedInput.taskId)
+        : [];
+
+      if (blockingApprovals.length > 0) {
+        throw new ApprovalGuardedTransitionBlockedError({
+          entityType: "task",
+          entityId: normalizedInput.taskId,
+          from: normalizedInput.from,
+          to: normalizedInput.to,
+          blockingApprovalIds: blockingApprovals.map((approval) => approval.id),
+        });
+      }
+
+      if (normalizedInput.from === normalizedInput.to) {
+        return current;
+      }
+
+      const updated = await this.repository.compareAndSwapTaskState(
+        normalizedInput.taskId,
+        normalizedInput.from,
+        normalizedInput.to,
+      );
+
+      if (updated) {
+        return {
+          ...current,
+          state: normalizedInput.to,
+        };
+      }
+
+      current = await getTaskOrThrow(this.repository, normalizedInput.taskId);
     }
 
-    const blockingApprovals = findBlockingApprovals(
-      normalizeApprovals(input.approvals),
-      "task",
-      normalizedTaskId,
-    );
-
-    if (blockingApprovals.length === 0) {
-      return;
-    }
-
-    throw new ApprovalGuardedTransitionBlockedError({
+    throw createConflictError({
       entityType: "task",
-      entityId: normalizedTaskId,
-      from: normalizedFrom,
-      to: normalizedTo,
-      blockingApprovalIds: blockingApprovals.map((approval) => approval.id),
+      entityId: normalizedInput.taskId,
+      expectedFrom: normalizedInput.from,
+      targetTo: normalizedInput.to,
+      currentValue: current.state,
     });
   }
 
-  assertRunTransitionAllowed(input: RunTransitionGuardInput): void {
-    const normalizedRunId = normalizeRequiredString(input.runId, "runId");
-    const normalizedFrom = normalizeRunStatus(input.from);
-    const normalizedTo = normalizeRunStatus(input.to);
+  async transitionRun(
+    input: RunTransitionInput,
+  ): Promise<ApprovalGuardedRunRecord> {
+    const normalizedInput = {
+      runId: normalizeRequiredString(input.runId, "runId"),
+      from: normalizeRunStatus(input.from),
+      to: normalizeRunStatus(input.to),
+    } satisfies RunTransitionInput;
 
-    if (!isGuardedTransition(normalizedFrom, normalizedTo)) {
-      return;
+    let current = await getRunOrThrow(this.repository, normalizedInput.runId);
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (current.status === normalizedInput.to) {
+        return current;
+      }
+
+      if (current.status !== normalizedInput.from) {
+        throw createConflictError({
+          entityType: "run",
+          entityId: normalizedInput.runId,
+          expectedFrom: normalizedInput.from,
+          targetTo: normalizedInput.to,
+          currentValue: current.status,
+        });
+      }
+
+      const approvals = normalizeApprovals(
+        await this.repository.listRunApprovals(normalizedInput.runId),
+      );
+      const blockingApprovals = isGuardedTransition(
+        normalizedInput.from,
+        normalizedInput.to,
+      )
+        ? findBlockingApprovals(approvals, "run", normalizedInput.runId)
+        : [];
+
+      if (blockingApprovals.length > 0) {
+        throw new ApprovalGuardedTransitionBlockedError({
+          entityType: "run",
+          entityId: normalizedInput.runId,
+          from: normalizedInput.from,
+          to: normalizedInput.to,
+          blockingApprovalIds: blockingApprovals.map((approval) => approval.id),
+        });
+      }
+
+      if (normalizedInput.from === normalizedInput.to) {
+        return current;
+      }
+
+      const updated = await this.repository.compareAndSwapRunStatus(
+        normalizedInput.runId,
+        normalizedInput.from,
+        normalizedInput.to,
+      );
+
+      if (updated) {
+        return {
+          ...current,
+          status: normalizedInput.to,
+        };
+      }
+
+      current = await getRunOrThrow(this.repository, normalizedInput.runId);
     }
 
-    const blockingApprovals = findBlockingApprovals(
-      normalizeApprovals(input.approvals),
-      "run",
-      normalizedRunId,
-    );
-
-    if (blockingApprovals.length === 0) {
-      return;
-    }
-
-    throw new ApprovalGuardedTransitionBlockedError({
+    throw createConflictError({
       entityType: "run",
-      entityId: normalizedRunId,
-      from: normalizedFrom,
-      to: normalizedTo,
-      blockingApprovalIds: blockingApprovals.map((approval) => approval.id),
+      entityId: normalizedInput.runId,
+      expectedFrom: normalizedInput.from,
+      targetTo: normalizedInput.to,
+      currentValue: current.status,
     });
   }
 }
 
-export function createApprovalGuardedTransitionService(): ApprovalGuardedTransitionService {
-  return new DefaultApprovalGuardedTransitionService();
+export function createApprovalGuardedTransitionService(
+  repository: ApprovalGuardedTransitionRepository,
+): ApprovalGuardedTransitionService {
+  return new DefaultApprovalGuardedTransitionService(repository);
 }
