@@ -111,34 +111,38 @@ async function createTestRuntime(
   };
 }
 
-async function reserveAvailablePort(): Promise<number> {
-  const probe = createServer();
-  activeServers.add(probe);
-
-  await new Promise<void>((resolve, reject) => {
-    probe.listen(0, "127.0.0.1", (error?: Error) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-
-      resolve();
-    });
-  });
-
-  const address = probe.address();
-
-  if (!address || typeof address === "string") {
-    await closeServer(probe);
-    throw new Error("Port probe did not expose a TCP address.");
-  }
-
-  await closeServer(probe);
-  return address.port;
-}
-
 function resolveFixturePath(fileName: string): string {
   return fileURLToPath(new URL(`./fixtures/${fileName}`, import.meta.url));
+}
+
+async function loadRealWebRuntimeStarter(): Promise<
+  (options: {
+    host: string;
+    port: number;
+    persistence?: {
+      configDir?: string;
+    };
+  }) => Promise<{
+    baseUrl: string;
+    healthUrl: string;
+    stop(): Promise<void>;
+  }>
+> {
+  const moduleUrl = new URL("../../web/src/index.ts", import.meta.url);
+  const runtimeModule = (await import(moduleUrl.href)) as {
+    startOrqisWebRuntime: (options: {
+      host: string;
+      port: number;
+      persistence?: {
+        configDir?: string;
+      };
+    }) => Promise<{
+      baseUrl: string;
+      healthUrl: string;
+      stop(): Promise<void>;
+    }>;
+  };
+  return runtimeModule.startOrqisWebRuntime;
 }
 
 afterEach(async () => {
@@ -1059,7 +1063,6 @@ describe("orqis init runtime bootstrap", () => {
   it("smoke-tests bootstrap config generation, runtime boot, and URL output contract", async () => {
     const configDir = await makeTempDir("orqis-init-smoke-");
     const configPath = join(configDir, ORQIS_CONFIG_FILE_NAME);
-    const runtimePort = await reserveAvailablePort();
     const log = vi.spyOn(console, "log").mockImplementation(() => {
       return;
     });
@@ -1076,25 +1079,13 @@ describe("orqis init runtime bootstrap", () => {
     const exitCode = await runCli(
       ["node", "orqis", "init", "--config-dir", configDir],
       {
-        bootstrapConfig: async (options) => {
-          const result = await bootstrapOrqisConfig(options);
-          const nextConfig = {
-            ...result.config,
-            runtime: {
-              host: "127.0.0.1",
-              port: runtimePort,
-            },
-          };
-
-          await writeFile(
-            result.configFilePath,
-            `${JSON.stringify(nextConfig, null, 2)}\n`,
-          );
-
-          return {
-            ...result,
-            config: nextConfig,
-          };
+        startWebRuntime: async (runtimeConfig) => {
+          const startWebRuntime = await loadRealWebRuntimeStarter();
+          return startWebRuntime({
+            host: runtimeConfig.host,
+            port: 0,
+            persistence: runtimeConfig.persistence,
+          });
         },
         waitForShutdown: async (runtime) => {
           await runtime.stop();
@@ -1112,10 +1103,7 @@ describe("orqis init runtime bootstrap", () => {
     };
 
     expect(saved.schemaVersion).toBe(DEFAULT_ORQIS_CONFIG.schemaVersion);
-    expect(saved.runtime).toEqual({
-      host: "127.0.0.1",
-      port: runtimePort,
-    });
+    expect(saved.runtime).toEqual(DEFAULT_ORQIS_CONFIG.runtime);
     expect(saved.tunnel).toEqual(DEFAULT_ORQIS_CONFIG.tunnel);
 
     expect(log).toHaveBeenCalledWith("orqis init: created");
@@ -1136,7 +1124,7 @@ describe("orqis init runtime bootstrap", () => {
     const localUrl = localUrlCall?.[0].replace("local_url=", "");
     const healthUrl = healthUrlCall?.[0].replace("health_url=", "");
 
-    expect(localUrl).toBe(`http://127.0.0.1:${runtimePort}`);
+    expect(localUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     expect(healthUrl).toBe(`${localUrl}/health`);
     expect(log).toHaveBeenCalledWith(
       "public_url=https://orqis-smoke.trycloudflare.com/",
@@ -1149,7 +1137,7 @@ describe("orqis init runtime bootstrap", () => {
       "tunnel_attempted_providers=cloudflare",
     );
     expect(log).toHaveBeenCalledWith("web_runtime=ready");
-  }, 20_000);
+  }, 75_000);
 
   it("returns non-zero for invalid CLI arguments without throwing", async () => {
     const exitCode = await runCli(["node", "orqis", "bogus"]);

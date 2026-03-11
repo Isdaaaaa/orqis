@@ -68,7 +68,10 @@ Safe to defer while Phase 2 starts:
 - [ ] Tighten `orqis init --health-timeout-ms` validation to reject non-numeric suffix input (for example `10abc`)
 - [ ] Add CLI regression coverage that asserts `--health-timeout-ms` rejects non-numeric suffix input (for example `10abc`)
 - [ ] Add signal-shutdown test coverage for `waitForRuntimeShutdown` (listener cleanup and runtime stop invocation)
-- [ ] Harden the `orqis init` smoke test against reserved-port race conditions (avoid probe-release-then-bind assumptions)
+- [x] Harden the `orqis init` smoke test against reserved-port race conditions (avoid probe-release-then-bind assumptions)
+  - Summary: Reworked the CLI smoke test to boot the real web runtime on an ephemeral port through the injected runtime dependency, eliminating the probe-release-then-bind race under `pnpm -r test`.
+  - Summary (follow-up): Widened the real-runtime smoke-test timeout budget so the CLI workspace-load path remains stable under the default `pnpm -r test` command after removing the reserved-port probe.
+  - Changed: `apps/cli/test/init.test.ts`, `TODO.md`.
 - [ ] Add an integration test that runs the real `apps/web/src/runtime-process.ts` entrypoint and asserts IPC ready/start-error messages plus graceful shutdown on parent disconnect
 - [ ] Add tunnel stop lifecycle regression coverage for the race where a child process exits between `hasExited` checks and stop-listener attachment
 
