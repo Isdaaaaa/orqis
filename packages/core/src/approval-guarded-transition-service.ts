@@ -338,10 +338,6 @@ class DefaultApprovalGuardedTransitionService
     let current = await getTaskOrThrow(this.repository, normalizedInput.taskId);
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      if (current.state === normalizedInput.to) {
-        return current;
-      }
-
       if (current.state !== normalizedInput.from) {
         throw createConflictError({
           entityType: "task",
@@ -350,6 +346,10 @@ class DefaultApprovalGuardedTransitionService
           targetTo: normalizedInput.to,
           currentValue: current.state,
         });
+      }
+
+      if (current.state === normalizedInput.to) {
+        return current;
       }
 
       const approvals = normalizeApprovals(
@@ -413,10 +413,6 @@ class DefaultApprovalGuardedTransitionService
     let current = await getRunOrThrow(this.repository, normalizedInput.runId);
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      if (current.status === normalizedInput.to) {
-        return current;
-      }
-
       if (current.status !== normalizedInput.from) {
         throw createConflictError({
           entityType: "run",
@@ -425,6 +421,10 @@ class DefaultApprovalGuardedTransitionService
           targetTo: normalizedInput.to,
           currentValue: current.status,
         });
+      }
+
+      if (current.status === normalizedInput.to) {
+        return current;
       }
 
       const approvals = normalizeApprovals(

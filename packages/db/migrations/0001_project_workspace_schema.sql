@@ -25,13 +25,6 @@ CREATE UNIQUE INDEX `workspaces_project_id_unique` ON `workspaces` (`project_id`
 CREATE UNIQUE INDEX `workspaces_project_id_id_unique` ON `workspaces` (`project_id`, `id`);
 CREATE INDEX `workspaces_created_at_idx` ON `workspaces` (`created_at`);
 
-CREATE TABLE `audit_context` (
-  `scope` text PRIMARY KEY NOT NULL CHECK (`scope` = 'current'),
-  `actor_type` text NOT NULL CHECK (`actor_type` in ('user', 'agent', 'system')),
-  `actor_id` text,
-  `correlation_run_id` text
-);
-
 CREATE TABLE `runs` (
   `id` text PRIMARY KEY NOT NULL,
   `project_id` text NOT NULL,
@@ -367,11 +360,8 @@ BEGIN
     NEW.`project_id`,
     NEW.`workspace_id`,
     NEW.`id`,
-    COALESCE(
-      (SELECT `actor_type` FROM `audit_context` WHERE `scope` = 'current'),
-      'system'
-    ),
-    (SELECT `actor_id` FROM `audit_context` WHERE `scope` = 'current'),
+    COALESCE(orqis_audit_actor_type(), 'system'),
+    orqis_audit_actor_id(),
     'run',
     NEW.`id`,
     'run.created'
@@ -397,11 +387,8 @@ BEGIN
     NEW.`project_id`,
     NEW.`workspace_id`,
     NEW.`id`,
-    COALESCE(
-      (SELECT `actor_type` FROM `audit_context` WHERE `scope` = 'current'),
-      'system'
-    ),
-    (SELECT `actor_id` FROM `audit_context` WHERE `scope` = 'current'),
+    COALESCE(orqis_audit_actor_type(), 'system'),
+    orqis_audit_actor_id(),
     'run',
     NEW.`id`,
     'run.updated'
@@ -431,14 +418,11 @@ BEGIN
       NEW.`execution_run_id`,
       NEW.`checkout_run_id`,
       NEW.`run_id`,
-      (SELECT `correlation_run_id` FROM `audit_context` WHERE `scope` = 'current')
+      orqis_audit_correlation_run_id()
     ),
     NEW.`id`,
-    COALESCE(
-      (SELECT `actor_type` FROM `audit_context` WHERE `scope` = 'current'),
-      'system'
-    ),
-    (SELECT `actor_id` FROM `audit_context` WHERE `scope` = 'current'),
+    COALESCE(orqis_audit_actor_type(), 'system'),
+    orqis_audit_actor_id(),
     'task',
     NEW.`id`,
     'task.created'
@@ -468,14 +452,11 @@ BEGIN
       NEW.`execution_run_id`,
       NEW.`checkout_run_id`,
       NEW.`run_id`,
-      (SELECT `correlation_run_id` FROM `audit_context` WHERE `scope` = 'current')
+      orqis_audit_correlation_run_id()
     ),
     NEW.`id`,
-    COALESCE(
-      (SELECT `actor_type` FROM `audit_context` WHERE `scope` = 'current'),
-      'system'
-    ),
-    (SELECT `actor_id` FROM `audit_context` WHERE `scope` = 'current'),
+    COALESCE(orqis_audit_actor_type(), 'system'),
+    orqis_audit_actor_id(),
     'task',
     NEW.`id`,
     'task.updated'
@@ -504,17 +485,17 @@ BEGIN
     NEW.`workspace_id`,
     COALESCE(
       NEW.`run_id`,
-      (SELECT `correlation_run_id` FROM `audit_context` WHERE `scope` = 'current')
+      orqis_audit_correlation_run_id()
     ),
     NEW.`task_id`,
     NEW.`id`,
     COALESCE(
-      (SELECT `actor_type` FROM `audit_context` WHERE `scope` = 'current'),
+      orqis_audit_actor_type(),
       NEW.`requested_by_actor_type`,
       'system'
     ),
     COALESCE(
-      (SELECT `actor_id` FROM `audit_context` WHERE `scope` = 'current'),
+      orqis_audit_actor_id(),
       NEW.`requested_by_actor_id`
     ),
     'approval',
@@ -545,18 +526,18 @@ BEGIN
     NEW.`workspace_id`,
     COALESCE(
       NEW.`run_id`,
-      (SELECT `correlation_run_id` FROM `audit_context` WHERE `scope` = 'current')
+      orqis_audit_correlation_run_id()
     ),
     NEW.`task_id`,
     NEW.`id`,
     COALESCE(
-      (SELECT `actor_type` FROM `audit_context` WHERE `scope` = 'current'),
+      orqis_audit_actor_type(),
       NEW.`decision_by_actor_type`,
       NEW.`requested_by_actor_type`,
       'system'
     ),
     COALESCE(
-      (SELECT `actor_id` FROM `audit_context` WHERE `scope` = 'current'),
+      orqis_audit_actor_id(),
       NEW.`decision_by_actor_id`,
       NEW.`requested_by_actor_id`
     ),

@@ -7,8 +7,11 @@ import { describe, expect, it } from "vitest";
 import {
   APPROVAL_STATUSES,
   DB_MIGRATION_FILES,
+  ORQIS_AUDIT_SQL_FUNCTION_NAMES,
   RUN_STATUSES,
   TASK_STATES,
+  createOrqisAuditSqlContextController,
+  registerOrqisAuditSqlFunctions,
   resolveDbMigrationsDir,
 } from "../src/index.ts";
 
@@ -19,6 +22,7 @@ type SqlJsQueryResult = {
 
 type SqliteDatabase = {
   close: () => void;
+  create_function: (name: string, fn: () => unknown) => unknown;
   exec: (sql: string) => SqlJsQueryResult[];
   run: (sql: string, params?: unknown[]) => unknown;
 };
@@ -52,18 +56,32 @@ function loadMigrationSql(): string {
   ).join("\n");
 }
 
-async function createDatabase(): Promise<SqliteDatabase> {
+async function createDatabase(): Promise<{
+  auditContext: ReturnType<typeof createOrqisAuditSqlContextController>;
+  db: SqliteDatabase;
+}> {
   const SQL = await getSqlJs();
   const db = new SQL.Database();
+  const auditContext = createOrqisAuditSqlContextController();
+  const typedDb = db as unknown as SqliteDatabase;
+  registerOrqisAuditSqlFunctions(typedDb, () => auditContext.getCurrentContext());
   db.run(loadMigrationSql());
-  return db as unknown as SqliteDatabase;
+  return {
+    auditContext,
+    db: typedDb,
+  };
 }
 
-async function withDatabase(run: (db: SqliteDatabase) => void | Promise<void>): Promise<void> {
-  const db = await createDatabase();
+async function withDatabase(
+  run: (
+    db: SqliteDatabase,
+    auditContext: ReturnType<typeof createOrqisAuditSqlContextController>,
+  ) => void | Promise<void>,
+): Promise<void> {
+  const { db, auditContext } = await createDatabase();
 
   try {
-    await run(db);
+    await run(db, auditContext);
   } finally {
     db.close();
   }
@@ -93,20 +111,6 @@ function queryRows(db: SqliteDatabase, sql: string): Record<string, unknown>[] {
     Object.fromEntries(
       result.columns.map((column, index) => [column, values[index]]),
     ),
-  );
-}
-
-function setAuditContext(
-  db: SqliteDatabase,
-  input: {
-    actorType: string;
-    actorId: string | null;
-    correlationRunId: string | null;
-  },
-): void {
-  db.run(
-    "INSERT OR REPLACE INTO audit_context (scope, actor_type, actor_id, correlation_run_id) VALUES ('current', ?, ?, ?)",
-    [input.actorType, input.actorId, input.correlationRunId],
   );
 }
 
@@ -148,15 +152,17 @@ describe("@orqis/db migration SQL", () => {
     }
   });
 
-  it("adds singleton audit context support for mutation actor and run correlation", () => {
-    const auditContextTableSql = extractTableSql(migrationSql, "audit_context");
-
-    expect(auditContextTableSql).toContain(
-      "`scope` text PRIMARY KEY NOT NULL CHECK (`scope` = 'current')",
+  it("uses connection-local SQL functions for audit actor and run correlation metadata", () => {
+    expect(migrationSql).not.toContain("CREATE TABLE `audit_context`");
+    expect(migrationSql).toContain(
+      `${ORQIS_AUDIT_SQL_FUNCTION_NAMES.actorType}()`,
     );
-    expect(auditContextTableSql).toContain("`actor_type` text NOT NULL");
-    expect(auditContextTableSql).toContain("`actor_id` text");
-    expect(auditContextTableSql).toContain("`correlation_run_id` text");
+    expect(migrationSql).toContain(
+      `${ORQIS_AUDIT_SQL_FUNCTION_NAMES.actorId}()`,
+    );
+    expect(migrationSql).toContain(
+      `${ORQIS_AUDIT_SQL_FUNCTION_NAMES.correlationRunId}()`,
+    );
   });
 
   it("defines run lifecycle states and timeline indexes", () => {
@@ -332,7 +338,7 @@ describe("@orqis/db migration SQL", () => {
   });
 
   it("emits audit events for run, task, and approval inserts and updates with actor and run correlation metadata", async () => {
-    await withDatabase((db) => {
+    await withDatabase((db, auditContext) => {
       db.run("INSERT INTO projects (id, slug, name) VALUES (?, ?, ?)", [
         "p1",
         "project-1",
@@ -344,78 +350,107 @@ describe("@orqis/db migration SQL", () => {
         "Workspace 1",
       ]);
 
-      setAuditContext(db, {
-        actorType: "system",
-        actorId: "bootstrap",
-        correlationRunId: null,
-      });
-      db.run(
-        "INSERT INTO runs (id, project_id, workspace_id, status) VALUES (?, ?, ?, ?)",
-        ["run_1", "p1", "w1", "planned"],
+      auditContext.runWithContext(
+        {
+          actorType: "system",
+          actorId: "bootstrap",
+          correlationRunId: null,
+        },
+        () => {
+          db.run(
+            "INSERT INTO runs (id, project_id, workspace_id, status) VALUES (?, ?, ?, ?)",
+            ["run_1", "p1", "w1", "planned"],
+          );
+        },
       );
 
-      setAuditContext(db, {
-        actorType: "agent",
-        actorId: "pm",
-        correlationRunId: "run_1",
-      });
-      db.run(
-        "UPDATE runs SET status = ?, started_at = ?, updated_at = ? WHERE id = ?",
-        [
-          "running",
-          "2026-03-11T09:00:00.000Z",
-          "2026-03-11T09:00:00.000Z",
-          "run_1",
-        ],
-      );
-      db.run(
-        "INSERT INTO tasks (id, project_id, workspace_id, title, state) VALUES (?, ?, ?, ?, ?)",
-        ["task_1", "p1", "w1", "Audit me", "todo"],
-      );
-
-      setAuditContext(db, {
-        actorType: "agent",
-        actorId: "backend_agent",
-        correlationRunId: "run_1",
-      });
-      db.run(
-        "UPDATE tasks SET state = ?, lock_owner_type = ?, lock_owner_id = ?, checkout_run_id = ?, execution_run_id = ?, updated_at = ? WHERE id = ?",
-        [
-          "in_progress",
-          "agent",
-          "backend_agent",
-          "run_1",
-          "run_1",
-          "2026-03-11T09:05:00.000Z",
-          "task_1",
-        ],
+      auditContext.runWithContext(
+        {
+          actorType: "agent",
+          actorId: "pm",
+          correlationRunId: "run_1",
+        },
+        () => {
+          db.run(
+            "UPDATE runs SET status = ?, started_at = ?, updated_at = ? WHERE id = ?",
+            [
+              "running",
+              "2026-03-11T09:00:00.000Z",
+              "2026-03-11T09:00:00.000Z",
+              "run_1",
+            ],
+          );
+          db.run(
+            "INSERT INTO tasks (id, project_id, workspace_id, title, state) VALUES (?, ?, ?, ?, ?)",
+            ["task_1", "p1", "w1", "Audit me", "todo"],
+          );
+        },
       );
 
-      setAuditContext(db, {
-        actorType: "agent",
-        actorId: "pm",
-        correlationRunId: "run_1",
-      });
-      db.run(
-        "INSERT INTO approvals (id, project_id, workspace_id, task_id, run_id, status, requested_by_actor_type, requested_by_actor_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        ["approval_1", "p1", "w1", "task_1", "run_1", "pending", "agent", "pm"],
+      auditContext.runWithContext(
+        {
+          actorType: "agent",
+          actorId: "backend_agent",
+          correlationRunId: "run_1",
+        },
+        () => {
+          db.run(
+            "UPDATE tasks SET state = ?, lock_owner_type = ?, lock_owner_id = ?, checkout_run_id = ?, execution_run_id = ?, updated_at = ? WHERE id = ?",
+            [
+              "in_progress",
+              "agent",
+              "backend_agent",
+              "run_1",
+              "run_1",
+              "2026-03-11T09:05:00.000Z",
+              "task_1",
+            ],
+          );
+        },
       );
 
-      setAuditContext(db, {
-        actorType: "user",
-        actorId: "owner",
-        correlationRunId: "run_1",
-      });
-      db.run(
-        "UPDATE approvals SET status = ?, decision_by_actor_type = ?, decision_by_actor_id = ?, decided_at = ?, updated_at = ? WHERE id = ?",
-        [
-          "approved",
-          "user",
-          "owner",
-          "2026-03-11T09:10:00.000Z",
-          "2026-03-11T09:10:00.000Z",
-          "approval_1",
-        ],
+      auditContext.runWithContext(
+        {
+          actorType: "agent",
+          actorId: "pm",
+          correlationRunId: "run_1",
+        },
+        () => {
+          db.run(
+            "INSERT INTO approvals (id, project_id, workspace_id, task_id, run_id, status, requested_by_actor_type, requested_by_actor_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+              "approval_1",
+              "p1",
+              "w1",
+              "task_1",
+              "run_1",
+              "pending",
+              "agent",
+              "pm",
+            ],
+          );
+        },
+      );
+
+      auditContext.runWithContext(
+        {
+          actorType: "user",
+          actorId: "owner",
+          correlationRunId: "run_1",
+        },
+        () => {
+          db.run(
+            "UPDATE approvals SET status = ?, decision_by_actor_type = ?, decision_by_actor_id = ?, decided_at = ?, updated_at = ? WHERE id = ?",
+            [
+              "approved",
+              "user",
+              "owner",
+              "2026-03-11T09:10:00.000Z",
+              "2026-03-11T09:10:00.000Z",
+              "approval_1",
+            ],
+          );
+        },
       );
 
       expect(readAuditEvents(db)).toEqual([
@@ -478,6 +513,63 @@ describe("@orqis/db migration SQL", () => {
           entityType: "approval",
           entityId: "approval_1",
           action: "approval.updated",
+        },
+      ]);
+    });
+  });
+
+  it("does not leak audit context between unrelated mutations on the same connection", async () => {
+    await withDatabase((db, auditContext) => {
+      db.run("INSERT INTO projects (id, slug, name) VALUES (?, ?, ?)", [
+        "p1",
+        "project-1",
+        "Project 1",
+      ]);
+      db.run("INSERT INTO workspaces (id, project_id, name) VALUES (?, ?, ?)", [
+        "w1",
+        "p1",
+        "Workspace 1",
+      ]);
+
+      auditContext.runWithContext(
+        {
+          actorType: "agent",
+          actorId: "alice",
+          correlationRunId: "run_1",
+        },
+        () => {
+          db.run(
+            "INSERT INTO runs (id, project_id, workspace_id, status) VALUES (?, ?, ?, ?)",
+            ["run_1", "p1", "w1", "planned"],
+          );
+        },
+      );
+
+      db.run(
+        "INSERT INTO tasks (id, project_id, workspace_id, title, state) VALUES (?, ?, ?, ?, ?)",
+        ["task_1", "p1", "w1", "Task without fresh context", "todo"],
+      );
+
+      expect(readAuditEvents(db)).toEqual([
+        {
+          actorType: "agent",
+          actorId: "alice",
+          runId: "run_1",
+          taskId: null,
+          approvalId: null,
+          entityType: "run",
+          entityId: "run_1",
+          action: "run.created",
+        },
+        {
+          actorType: "system",
+          actorId: null,
+          runId: null,
+          taskId: "task_1",
+          approvalId: null,
+          entityType: "task",
+          entityId: "task_1",
+          action: "task.created",
         },
       ]);
     });
