@@ -306,6 +306,11 @@ Safe to defer:
 - [ ] Add browser regression coverage for workspace-shell script initialization and quick-project popover visibility (prevent parse-time JS failures and clipped rail popover interactions)
   - Acceptance criteria: browser regressions catch workspace-shell script initialization failures and quick-project popover visibility/clipping issues.
 
+#### Hardening before Phase 5
+
+Unclassified:
+- [ ] Add planner workflow-command regression coverage for `implementation:`/`integration:` aliases and unknown-prefix fallback behavior so command parsing remains stable across planner core/runtime paths
+
 ## Later: Parallel execution and repository workflows
 
 - [ ] Introduce dispatcher interface with serial and parallel backends
