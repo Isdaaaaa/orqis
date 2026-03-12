@@ -1039,6 +1039,9 @@ describe("orqis init runtime bootstrap", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {
       return;
     });
+    const runtimeStop = vi.fn(async () => {
+      return;
+    });
 
     vi.stubEnv(
       "ORQIS_CLOUDFLARE_PUBLIC_URL",
@@ -1049,7 +1052,25 @@ describe("orqis init runtime bootstrap", () => {
     const exitCode = await runCli(
       ["node", "orqis", "init", "--config-dir", configDir],
       {
-        startWebRuntime: async () => createTestRuntime(),
+        fetchImpl: async () =>
+          new Response(
+            JSON.stringify({
+              service: "@orqis/web",
+              status: "ok",
+              uptimeMs: 1,
+            }),
+            {
+              status: 200,
+              headers: {
+                "content-type": "application/json; charset=utf-8",
+              },
+            },
+          ),
+        startWebRuntime: async () => ({
+          baseUrl: "http://127.0.0.1:43110",
+          healthUrl: "http://127.0.0.1:43110/health",
+          stop: runtimeStop,
+        }),
         waitForShutdown: async (runtime) => {
           await runtime.stop();
         },
@@ -1100,6 +1121,7 @@ describe("orqis init runtime bootstrap", () => {
       "tunnel_attempted_providers=cloudflare",
     );
     expect(log).toHaveBeenCalledWith("web_runtime=ready");
+    expect(runtimeStop).toHaveBeenCalledTimes(1);
   }, 75_000);
 
   it("returns non-zero for invalid CLI arguments without throwing", async () => {
