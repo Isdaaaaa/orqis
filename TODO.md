@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Start Phase 3 with persistent provider/model/agent-role configuration so PM planning and task assignment can use durable settings instead of hard-coded defaults.
+Continue Phase 3 with the Project Manager planner service now that provider/model/agent-role settings persist across restarts and can be consumed by later workflow slices.
 
 ## Completed
 
@@ -194,9 +194,20 @@ Safe to defer:
 
 ## Phase 3: Project Manager planning and task approvals
 
-- [ ] Add persistent provider/model/agent-role configuration
+- [x] Add persistent provider/model/agent-role configuration
   - Acceptance criteria: user can configure at least one provider, one model, and at least two agent roles in the web UI.
   - Acceptance criteria: configuration persists across restarts and is available to Project Manager planning and task-assignment flows.
+  - Summary: Added persistent `provider_configs`, `model_configs`, and `agent_profiles` tables plus a follow-on migration path that upgrades existing Phase 2 databases instead of assuming a fresh rebuild.
+  - Summary (follow-up): Extended the web persistence store and authenticated runtime API with durable get/save agent-configuration flows, seeded defaults, and validation that enforces the minimum provider/model/role contract.
+  - Summary (follow-up): Replaced the static Assigned Agents placeholder with a settings editor for providers, models, and agent roles, then added regression coverage for API behavior, restart persistence, and legacy database upgrades.
+  - Changed: `packages/db/migrations/0002_agent_configuration.sql`, `packages/db/src/migrations.ts`, `packages/db/src/schema.ts`, `packages/db/test/migrations.test.ts`, `apps/web/src/persistence.ts`, `apps/web/src/index.ts`, `apps/web/test/runtime.test.ts`, `apps/web/test/timeline-persistence.test.ts`, `README.md`, `TODO.md`.
+
+#### Additional fixes discovered during Phase 3
+
+- [x] Prevent silent provider/model reassignment in the Assigned Agents editor
+  - Summary: Preserved missing provider/model references in the draft instead of auto-rebinding them, blocked provider/model removal when dependent entries still exist, and surfaced missing-reference labels so reassignment stays explicit.
+  - Summary (follow-up): Added focused regression coverage for provider-removal and model-removal draft flows through shared editor helpers.
+  - Changed: `apps/web/src/agent-configuration-editor.ts`, `apps/web/src/index.ts`, `apps/web/test/agent-configuration-editor.test.ts`, `TODO.md`.
 
 - [ ] Implement Project Manager planner service (`goal -> plan -> task list`)
   - Acceptance criteria: planner persists plan and emits visible plan message in workspace chat.

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 export const DB_MIGRATION_FILES = [
   "0001_project_workspace_schema.sql",
+  "0002_agent_configuration.sql",
 ] as const;
 
 export type DbMigrationFileName = (typeof DB_MIGRATION_FILES)[number];

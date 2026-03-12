@@ -76,6 +76,57 @@ export const workspaces = sqliteTable(
   ],
 );
 
+export const providerConfigs = sqliteTable(
+  "provider_configs",
+  {
+    providerKey: text("provider_key").primaryKey(),
+    displayName: text("display_name").notNull(),
+    baseUrl: text("base_url"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [index("provider_configs_created_at_idx").on(table.createdAt)],
+);
+
+export const modelConfigs = sqliteTable(
+  "model_configs",
+  {
+    modelKey: text("model_key").primaryKey(),
+    providerKey: text("provider_key")
+      .notNull()
+      .references(() => providerConfigs.providerKey, { onDelete: "cascade" }),
+    displayName: text("display_name").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("model_configs_provider_key_created_at_idx").on(
+      table.providerKey,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const agentProfiles = sqliteTable(
+  "agent_profiles",
+  {
+    roleKey: text("role_key").primaryKey(),
+    displayName: text("display_name").notNull(),
+    modelKey: text("model_key")
+      .notNull()
+      .references(() => modelConfigs.modelKey, { onDelete: "cascade" }),
+    responsibility: text("responsibility").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("agent_profiles_model_key_created_at_idx").on(
+      table.modelKey,
+      table.createdAt,
+    ),
+  ],
+);
+
 export const runs = sqliteTable(
   "runs",
   {

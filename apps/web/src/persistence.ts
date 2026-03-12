@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,7 +13,7 @@ export const ORQIS_WEB_RUNTIME_DB_PATH_ENV_VAR = "ORQIS_WEB_RUNTIME_DB_PATH";
 const DEFAULT_ORQIS_CONFIG_DIR = ".orqis";
 const DEFAULT_ORQIS_DB_FILE_NAME = "orqis.db";
 const PROJECTS_TABLE_NAME = "projects";
-const DB_INITIAL_MIGRATION_FILE = "0001_project_workspace_schema.sql";
+const ORQIS_SCHEMA_MIGRATIONS_TABLE_NAME = "orqis_schema_migrations";
 const SQLITE_NATIVE_BINDING_UNAVAILABLE_ERROR_CODE =
   "ERR_ORQIS_SQLITE_BINDINGS_UNAVAILABLE";
 const SQLITE_NATIVE_BINDING_RECOVERY_COMMANDS = [
@@ -25,6 +25,17 @@ const SQLITE_NATIVE_BINDING_ERROR_PATTERNS = [
   "Could not locate the bindings file",
   "No native build was found for",
   "node-v",
+] as const;
+const DB_MIGRATION_FILE_PATTERN = /^\d+_.+\.sql$/;
+const LEGACY_DB_MIGRATION_SENTINELS = [
+  {
+    fileName: "0001_project_workspace_schema.sql",
+    sentinelTableName: PROJECTS_TABLE_NAME,
+  },
+  {
+    fileName: "0002_agent_configuration.sql",
+    sentinelTableName: "provider_configs",
+  },
 ] as const;
 
 const WORKSPACE_MESSAGE_ACTOR_TYPES = ["user", "agent", "system"] as const;
@@ -64,6 +75,56 @@ export interface CreateProjectInput {
   readonly description?: string;
 }
 
+export interface AgentProviderConfiguration {
+  readonly providerKey: string;
+  readonly displayName: string;
+  readonly baseUrl: string | null;
+}
+
+export interface AgentModelConfiguration {
+  readonly modelKey: string;
+  readonly providerKey: string;
+  readonly displayName: string;
+}
+
+export interface AgentRoleConfiguration {
+  readonly roleKey: string;
+  readonly displayName: string;
+  readonly modelKey: string;
+  readonly responsibility: string;
+}
+
+export interface AgentConfiguration {
+  readonly providers: readonly AgentProviderConfiguration[];
+  readonly models: readonly AgentModelConfiguration[];
+  readonly agentRoles: readonly AgentRoleConfiguration[];
+}
+
+export interface SaveAgentProviderConfigurationInput {
+  readonly providerKey: string;
+  readonly displayName: string;
+  readonly baseUrl?: string | null;
+}
+
+export interface SaveAgentModelConfigurationInput {
+  readonly modelKey: string;
+  readonly providerKey: string;
+  readonly displayName: string;
+}
+
+export interface SaveAgentRoleConfigurationInput {
+  readonly roleKey: string;
+  readonly displayName: string;
+  readonly modelKey: string;
+  readonly responsibility: string;
+}
+
+export interface SaveAgentConfigurationInput {
+  readonly providers: readonly SaveAgentProviderConfigurationInput[];
+  readonly models: readonly SaveAgentModelConfigurationInput[];
+  readonly agentRoles: readonly SaveAgentRoleConfigurationInput[];
+}
+
 export interface WorkspaceTimelineStoreOptions {
   readonly databaseFilePath?: string;
   readonly configDir?: string;
@@ -75,6 +136,8 @@ export interface WorkspaceTimelineStore {
   listProjects(): ProjectWorkspaceSummary[];
   createProject(input: CreateProjectInput): ProjectWorkspaceSummary;
   listWorkspaceMessages(workspaceId: string): WorkspaceTimelineMessage[];
+  getAgentConfiguration(): AgentConfiguration;
+  saveAgentConfiguration(input: SaveAgentConfigurationInput): AgentConfiguration;
   appendWorkspaceMessage(
     input: AppendWorkspaceTimelineMessageInput,
   ): WorkspaceTimelineMessage;
@@ -149,6 +212,35 @@ interface ProjectWorkspaceRow {
   readonly workspaceName: string;
 }
 
+interface AgentProviderConfigurationRow {
+  readonly providerKey: string;
+  readonly displayName: string;
+  readonly baseUrl: string | null;
+}
+
+interface AgentModelConfigurationRow {
+  readonly modelKey: string;
+  readonly providerKey: string;
+  readonly displayName: string;
+}
+
+interface AgentRoleConfigurationRow {
+  readonly roleKey: string;
+  readonly displayName: string;
+  readonly modelKey: string;
+  readonly responsibility: string;
+}
+
+interface AgentConfigurationCountRow {
+  readonly providerCount: number;
+  readonly modelCount: number;
+  readonly agentRoleCount: number;
+}
+
+interface SchemaMigrationRow {
+  readonly fileName: string;
+}
+
 function normalizeOptionalString(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -166,6 +258,37 @@ function normalizeRequiredString(value: string, label: string): string {
   }
 
   return normalized;
+}
+
+function normalizeOptionalUrl(
+  value: string | null | undefined,
+  label: string,
+): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const normalized = value.trim();
+
+  if (normalized.length === 0) {
+    return null;
+  }
+
+  let parsedUrl: URL;
+
+  try {
+    parsedUrl = new URL(normalized);
+  } catch {
+    throw new WorkspaceTimelineValidationError(`${label} must be a valid URL.`);
+  }
+
+  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+    throw new WorkspaceTimelineValidationError(
+      `${label} must use http or https.`,
+    );
+  }
+
+  return parsedUrl.toString();
 }
 
 function normalizeAuditOptionalString(
@@ -355,13 +478,13 @@ export function validateWorkspaceTimelinePersistenceRuntime(
   }
 }
 
-function resolveDbMigrationFilePath(moduleUrl = import.meta.url): string {
+function resolveDbMigrationsDirPath(moduleUrl = import.meta.url): string {
   const moduleDir = dirname(fileURLToPath(moduleUrl));
 
   const candidates = [
-    resolve(moduleDir, `../../../packages/db/migrations/${DB_INITIAL_MIGRATION_FILE}`),
-    resolve(moduleDir, `../../packages/db/migrations/${DB_INITIAL_MIGRATION_FILE}`),
-    resolve(moduleDir, `../migrations/${DB_INITIAL_MIGRATION_FILE}`),
+    resolve(moduleDir, "../../../packages/db/migrations"),
+    resolve(moduleDir, "../../packages/db/migrations"),
+    resolve(moduleDir, "../migrations"),
   ];
 
   for (const candidate of candidates) {
@@ -371,26 +494,117 @@ function resolveDbMigrationFilePath(moduleUrl = import.meta.url): string {
   }
 
   throw new Error(
-    `Cannot resolve DB migration SQL from ${moduleDir}. Expected one of: ${candidates.join(", ")}`,
+    `Cannot resolve DB migrations directory from ${moduleDir}. Expected one of: ${candidates.join(", ")}`,
   );
 }
 
-function hasSchemaTables(database: SqliteDatabaseSync): boolean {
+function listDbMigrationFiles(moduleUrl = import.meta.url): string[] {
+  return readdirSync(resolveDbMigrationsDirPath(moduleUrl))
+    .filter((fileName) => DB_MIGRATION_FILE_PATTERN.test(fileName))
+    .sort();
+}
+
+function readDbMigrationSql(fileName: string, moduleUrl = import.meta.url): string {
+  return readFileSync(join(resolveDbMigrationsDirPath(moduleUrl), fileName), "utf8");
+}
+
+function hasTable(database: SqliteDatabaseSync, tableName: string): boolean {
   const row = database
     .prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
     )
-    .get(PROJECTS_TABLE_NAME) as { name: string } | undefined;
+    .get(tableName) as { name: string } | undefined;
 
   return row !== undefined;
 }
 
-function applySchemaMigrations(database: SqliteDatabaseSync): void {
-  if (hasSchemaTables(database)) {
+function hasSchemaTables(database: SqliteDatabaseSync): boolean {
+  return hasTable(database, PROJECTS_TABLE_NAME);
+}
+
+function ensureSchemaMigrationsTable(database: SqliteDatabaseSync): void {
+  database.exec(
+    [
+      `CREATE TABLE IF NOT EXISTS \`${ORQIS_SCHEMA_MIGRATIONS_TABLE_NAME}\` (`,
+      "  `file_name` text PRIMARY KEY NOT NULL,",
+      "  `executed_at` text NOT NULL DEFAULT CURRENT_TIMESTAMP",
+      ");",
+    ].join("\n"),
+  );
+}
+
+function listAppliedSchemaMigrationFiles(database: SqliteDatabaseSync): Set<string> {
+  const rows = database
+    .prepare(
+      [
+        "SELECT",
+        "  file_name AS fileName",
+        `FROM ${ORQIS_SCHEMA_MIGRATIONS_TABLE_NAME}`,
+        "ORDER BY file_name ASC",
+      ].join("\n"),
+    )
+    .all() as SchemaMigrationRow[];
+
+  return new Set(rows.map((row) => row.fileName));
+}
+
+function markSchemaMigrationApplied(
+  database: SqliteDatabaseSync,
+  fileName: string,
+): void {
+  database
+    .prepare(
+      `INSERT INTO ${ORQIS_SCHEMA_MIGRATIONS_TABLE_NAME} (file_name) VALUES (?)`,
+    )
+    .run(fileName);
+}
+
+function seedLegacySchemaMigrations(
+  database: SqliteDatabaseSync,
+  availableMigrationFiles: readonly string[],
+): void {
+  if (!hasSchemaTables(database)) {
     return;
   }
 
-  database.exec(readFileSync(resolveDbMigrationFilePath(), "utf8"));
+  const appliedMigrations = listAppliedSchemaMigrationFiles(database);
+
+  for (const sentinel of LEGACY_DB_MIGRATION_SENTINELS) {
+    if (
+      !availableMigrationFiles.includes(sentinel.fileName) ||
+      appliedMigrations.has(sentinel.fileName) ||
+      !hasTable(database, sentinel.sentinelTableName)
+    ) {
+      continue;
+    }
+
+    markSchemaMigrationApplied(database, sentinel.fileName);
+  }
+}
+
+function applySchemaMigrations(database: SqliteDatabaseSync): void {
+  const availableMigrationFiles = listDbMigrationFiles();
+  const hadSchemaMigrationsTable = hasTable(
+    database,
+    ORQIS_SCHEMA_MIGRATIONS_TABLE_NAME,
+  );
+
+  ensureSchemaMigrationsTable(database);
+
+  if (!hadSchemaMigrationsTable) {
+    seedLegacySchemaMigrations(database, availableMigrationFiles);
+  }
+
+  const appliedMigrations = listAppliedSchemaMigrationFiles(database);
+
+  for (const fileName of availableMigrationFiles) {
+    if (appliedMigrations.has(fileName)) {
+      continue;
+    }
+
+    database.exec(readDbMigrationSql(fileName));
+    markSchemaMigrationApplied(database, fileName);
+  }
 }
 
 function resolveConfigDir(
@@ -453,6 +667,55 @@ function createProjectSlug(name: string): string {
   return slug.length > 0 ? slug : "project";
 }
 
+function createDefaultAgentConfiguration(): SaveAgentConfigurationInput {
+  return {
+    providers: [
+      {
+        providerKey: "openai",
+        displayName: "OpenAI",
+        baseUrl: "https://api.openai.com/v1",
+      },
+    ],
+    models: [
+      {
+        modelKey: "gpt-5",
+        providerKey: "openai",
+        displayName: "GPT-5",
+      },
+    ],
+    agentRoles: [
+      {
+        roleKey: "project_manager",
+        displayName: "Project Manager",
+        modelKey: "gpt-5",
+        responsibility:
+          "Plans work, decomposes requests, assigns tasks, and manages approvals.",
+      },
+      {
+        roleKey: "frontend_agent",
+        displayName: "Frontend Agent",
+        modelKey: "gpt-5",
+        responsibility:
+          "Owns UI structure, styling, interaction details, and browser-facing fixes.",
+      },
+      {
+        roleKey: "backend_agent",
+        displayName: "Backend Agent",
+        modelKey: "gpt-5",
+        responsibility:
+          "Owns runtime behavior, orchestration services, persistence, and API contracts.",
+      },
+      {
+        roleKey: "reviewer",
+        displayName: "Reviewer",
+        modelKey: "gpt-5",
+        responsibility:
+          "Owns validation, defect finding, regression review, and release-readiness checks.",
+      },
+    ],
+  };
+}
+
 export function createWorkspaceTimelineDatabaseHandle(
   databaseFilePath: string,
 ): WorkspaceTimelineDatabaseHandle {
@@ -495,6 +758,145 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
   constructor(readonly databaseFilePath: string) {
     this.databaseHandle = createWorkspaceTimelineDatabaseHandle(databaseFilePath);
     this.database = this.databaseHandle.database;
+    this.ensureAgentConfigurationSeeded();
+  }
+
+  getAgentConfiguration(): AgentConfiguration {
+    const providers = this.database
+      .prepare(
+        [
+          "SELECT",
+          "  provider_key AS providerKey,",
+          "  display_name AS displayName,",
+          "  base_url AS baseUrl",
+          "FROM provider_configs",
+          "ORDER BY rowid ASC",
+        ].join("\n"),
+      )
+      .all() as AgentProviderConfigurationRow[];
+
+    const models = this.database
+      .prepare(
+        [
+          "SELECT",
+          "  model_key AS modelKey,",
+          "  provider_key AS providerKey,",
+          "  display_name AS displayName",
+          "FROM model_configs",
+          "ORDER BY rowid ASC",
+        ].join("\n"),
+      )
+      .all() as AgentModelConfigurationRow[];
+
+    const agentRoles = this.database
+      .prepare(
+        [
+          "SELECT",
+          "  role_key AS roleKey,",
+          "  display_name AS displayName,",
+          "  model_key AS modelKey,",
+          "  responsibility",
+          "FROM agent_profiles",
+          "ORDER BY rowid ASC",
+        ].join("\n"),
+      )
+      .all() as AgentRoleConfigurationRow[];
+
+    return {
+      providers: providers.map((provider) => ({
+        providerKey: provider.providerKey,
+        displayName: provider.displayName,
+        baseUrl: provider.baseUrl,
+      })),
+      models: models.map((model) => ({
+        modelKey: model.modelKey,
+        providerKey: model.providerKey,
+        displayName: model.displayName,
+      })),
+      agentRoles: agentRoles.map((agentRole) => ({
+        roleKey: agentRole.roleKey,
+        displayName: agentRole.displayName,
+        modelKey: agentRole.modelKey,
+        responsibility: agentRole.responsibility,
+      })),
+    };
+  }
+
+  saveAgentConfiguration(
+    input: SaveAgentConfigurationInput,
+  ): AgentConfiguration {
+    const providers = this.normalizeProviderConfigurations(input.providers);
+    const models = this.normalizeModelConfigurations(input.models, providers);
+    const agentRoles = this.normalizeAgentRoleConfigurations(
+      input.agentRoles,
+      models,
+    );
+
+    let transactionStarted = false;
+
+    try {
+      this.database.exec("BEGIN IMMEDIATE");
+      transactionStarted = true;
+
+      this.database.prepare("DELETE FROM agent_profiles").run();
+      this.database.prepare("DELETE FROM model_configs").run();
+      this.database.prepare("DELETE FROM provider_configs").run();
+
+      for (const provider of providers) {
+        this.database
+          .prepare(
+            [
+              "INSERT INTO provider_configs",
+              "  (provider_key, display_name, base_url)",
+              "VALUES",
+              "  (?, ?, ?)",
+            ].join("\n"),
+          )
+          .run(provider.providerKey, provider.displayName, provider.baseUrl);
+      }
+
+      for (const model of models) {
+        this.database
+          .prepare(
+            [
+              "INSERT INTO model_configs",
+              "  (model_key, provider_key, display_name)",
+              "VALUES",
+              "  (?, ?, ?)",
+            ].join("\n"),
+          )
+          .run(model.modelKey, model.providerKey, model.displayName);
+      }
+
+      for (const agentRole of agentRoles) {
+        this.database
+          .prepare(
+            [
+              "INSERT INTO agent_profiles",
+              "  (role_key, display_name, model_key, responsibility)",
+              "VALUES",
+              "  (?, ?, ?, ?)",
+            ].join("\n"),
+          )
+          .run(
+            agentRole.roleKey,
+            agentRole.displayName,
+            agentRole.modelKey,
+            agentRole.responsibility,
+          );
+      }
+
+      this.database.exec("COMMIT");
+      transactionStarted = false;
+
+      return this.getAgentConfiguration();
+    } catch (error) {
+      if (transactionStarted) {
+        this.database.exec("ROLLBACK");
+      }
+
+      throw mapSqliteError(error);
+    }
   }
 
   listProjects(): ProjectWorkspaceSummary[] {
@@ -753,6 +1155,172 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
       .get(slug) as ProjectIdRow | undefined;
 
     return existingProject !== undefined;
+  }
+
+  private ensureAgentConfigurationSeeded(): void {
+    const counts = this.database
+      .prepare(
+        [
+          "SELECT",
+          "  (SELECT COUNT(*) FROM provider_configs) AS providerCount,",
+          "  (SELECT COUNT(*) FROM model_configs) AS modelCount,",
+          "  (SELECT COUNT(*) FROM agent_profiles) AS agentRoleCount",
+        ].join("\n"),
+      )
+      .get() as AgentConfigurationCountRow;
+
+    if (
+      counts.providerCount >= 1 &&
+      counts.modelCount >= 1 &&
+      counts.agentRoleCount >= 2
+    ) {
+      return;
+    }
+
+    this.saveAgentConfiguration(createDefaultAgentConfiguration());
+  }
+
+  private normalizeProviderConfigurations(
+    providers: readonly SaveAgentProviderConfigurationInput[],
+  ): AgentProviderConfiguration[] {
+    if (providers.length === 0) {
+      throw new WorkspaceTimelineValidationError(
+        "At least one provider configuration is required.",
+      );
+    }
+
+    const seenProviderKeys = new Set<string>();
+
+    return providers.map((provider, index) => {
+      const providerKey = normalizeRequiredString(
+        provider.providerKey,
+        `providers[${index}].providerKey`,
+      ).toLowerCase();
+      const displayName = normalizeRequiredString(
+        provider.displayName,
+        `providers[${index}].displayName`,
+      );
+
+      if (seenProviderKeys.has(providerKey)) {
+        throw new WorkspaceTimelineValidationError(
+          `providers[${index}].providerKey must be unique.`,
+        );
+      }
+
+      seenProviderKeys.add(providerKey);
+
+      return {
+        providerKey,
+        displayName,
+        baseUrl: normalizeOptionalUrl(
+          provider.baseUrl,
+          `providers[${index}].baseUrl`,
+        ),
+      };
+    });
+  }
+
+  private normalizeModelConfigurations(
+    models: readonly SaveAgentModelConfigurationInput[],
+    providers: readonly AgentProviderConfiguration[],
+  ): AgentModelConfiguration[] {
+    if (models.length === 0) {
+      throw new WorkspaceTimelineValidationError(
+        "At least one model configuration is required.",
+      );
+    }
+
+    const providerKeys = new Set(providers.map((provider) => provider.providerKey));
+    const seenModelKeys = new Set<string>();
+
+    return models.map((model, index) => {
+      const modelKey = normalizeRequiredString(
+        model.modelKey,
+        `models[${index}].modelKey`,
+      );
+      const providerKey = normalizeRequiredString(
+        model.providerKey,
+        `models[${index}].providerKey`,
+      ).toLowerCase();
+      const displayName = normalizeRequiredString(
+        model.displayName,
+        `models[${index}].displayName`,
+      );
+
+      if (!providerKeys.has(providerKey)) {
+        throw new WorkspaceTimelineValidationError(
+          `models[${index}].providerKey must reference an existing provider.`,
+        );
+      }
+
+      if (seenModelKeys.has(modelKey)) {
+        throw new WorkspaceTimelineValidationError(
+          `models[${index}].modelKey must be unique.`,
+        );
+      }
+
+      seenModelKeys.add(modelKey);
+
+      return {
+        modelKey,
+        providerKey,
+        displayName,
+      };
+    });
+  }
+
+  private normalizeAgentRoleConfigurations(
+    agentRoles: readonly SaveAgentRoleConfigurationInput[],
+    models: readonly AgentModelConfiguration[],
+  ): AgentRoleConfiguration[] {
+    if (agentRoles.length < 2) {
+      throw new WorkspaceTimelineValidationError(
+        "At least two agent role configurations are required.",
+      );
+    }
+
+    const modelKeys = new Set(models.map((model) => model.modelKey));
+    const seenRoleKeys = new Set<string>();
+
+    return agentRoles.map((agentRole, index) => {
+      const roleKey = normalizeRequiredString(
+        agentRole.roleKey,
+        `agentRoles[${index}].roleKey`,
+      ).toLowerCase();
+      const displayName = normalizeRequiredString(
+        agentRole.displayName,
+        `agentRoles[${index}].displayName`,
+      );
+      const modelKey = normalizeRequiredString(
+        agentRole.modelKey,
+        `agentRoles[${index}].modelKey`,
+      );
+      const responsibility = normalizeRequiredString(
+        agentRole.responsibility,
+        `agentRoles[${index}].responsibility`,
+      );
+
+      if (!modelKeys.has(modelKey)) {
+        throw new WorkspaceTimelineValidationError(
+          `agentRoles[${index}].modelKey must reference an existing model.`,
+        );
+      }
+
+      if (seenRoleKeys.has(roleKey)) {
+        throw new WorkspaceTimelineValidationError(
+          `agentRoles[${index}].roleKey must be unique.`,
+        );
+      }
+
+      seenRoleKeys.add(roleKey);
+
+      return {
+        roleKey,
+        displayName,
+        modelKey,
+        responsibility,
+      };
+    });
   }
 }
 

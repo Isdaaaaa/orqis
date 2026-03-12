@@ -306,6 +306,159 @@ describe("@orqis/web runtime", () => {
   );
 
   it(
+    "serves authenticated agent-configuration reads and writes with persisted role mappings",
+    async () => {
+      const { databaseFilePath, cleanup } = await createRuntimeDatabaseFilePath();
+      const runtime = await startOrqisWebRuntime({
+        host: "127.0.0.1",
+        port: 0,
+        persistence: {
+          databaseFilePath,
+        },
+      });
+
+      try {
+        const configurationUrl = `${runtime.baseUrl}/api/settings/agent-configuration`;
+
+        await expectAuthenticationRequiredResponse(
+          await fetch(configurationUrl),
+        );
+
+        const sessionCookie = await createSessionCookie(runtime.baseUrl, "owner");
+
+        const initialConfigurationResponse = await fetch(configurationUrl, {
+          headers: withSessionCookie(sessionCookie),
+        });
+        const initialConfigurationBody =
+          (await initialConfigurationResponse.json()) as {
+            configuration?: {
+              providers?: Array<{ providerKey?: string }>;
+              models?: Array<{ modelKey?: string }>;
+              agentRoles?: Array<{ roleKey?: string }>;
+            };
+          };
+
+        expect(initialConfigurationResponse.status).toBe(200);
+        expectNoStoreCacheControl(initialConfigurationResponse);
+        expect(
+          initialConfigurationBody.configuration?.providers?.[0]?.providerKey,
+        ).toBe("openai");
+        expect(initialConfigurationBody.configuration?.models?.[0]?.modelKey).toBe(
+          "gpt-5",
+        );
+        expect(
+          initialConfigurationBody.configuration?.agentRoles?.length,
+        ).toBeGreaterThanOrEqual(2);
+
+        const saveConfigurationResponse = await fetch(configurationUrl, {
+          method: "PUT",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            providers: [
+              {
+                providerKey: "anthropic",
+                displayName: "Anthropic",
+                baseUrl: "https://api.anthropic.com/v1",
+              },
+            ],
+            models: [
+              {
+                modelKey: "claude-sonnet-4",
+                providerKey: "anthropic",
+                displayName: "Claude Sonnet 4",
+              },
+            ],
+            agentRoles: [
+              {
+                roleKey: "project_manager",
+                displayName: "Project Manager",
+                modelKey: "claude-sonnet-4",
+                responsibility: "Creates plans and coordinates approvals.",
+              },
+              {
+                roleKey: "backend_agent",
+                displayName: "Backend Agent",
+                modelKey: "claude-sonnet-4",
+                responsibility: "Owns runtime behavior and persistence changes.",
+              },
+            ],
+          }),
+        });
+        const saveConfigurationBody =
+          (await saveConfigurationResponse.json()) as {
+            configuration?: {
+              providers?: Array<{ providerKey?: string; baseUrl?: string | null }>;
+              models?: Array<{ modelKey?: string; providerKey?: string }>;
+              agentRoles?: Array<{ roleKey?: string; modelKey?: string }>;
+            };
+          };
+
+        expect(saveConfigurationResponse.status).toBe(200);
+        expectNoStoreCacheControl(saveConfigurationResponse);
+        expect(
+          saveConfigurationBody.configuration?.providers?.[0],
+        ).toMatchObject({
+          providerKey: "anthropic",
+          baseUrl: "https://api.anthropic.com/v1",
+        });
+        expect(saveConfigurationBody.configuration?.models?.[0]).toMatchObject({
+          modelKey: "claude-sonnet-4",
+          providerKey: "anthropic",
+        });
+        expect(
+          saveConfigurationBody.configuration?.agentRoles?.map((agentRole) =>
+            agentRole.roleKey
+          ),
+        ).toEqual(["project_manager", "backend_agent"]);
+
+        const invalidConfigurationResponse = await fetch(configurationUrl, {
+          method: "PUT",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            providers: [
+              {
+                providerKey: "anthropic",
+                displayName: "Anthropic",
+              },
+            ],
+            models: [
+              {
+                modelKey: "claude-sonnet-4",
+                providerKey: "anthropic",
+                displayName: "Claude Sonnet 4",
+              },
+            ],
+            agentRoles: [
+              {
+                roleKey: "project_manager",
+                displayName: "Project Manager",
+                modelKey: "claude-sonnet-4",
+                responsibility: "Creates plans and coordinates approvals.",
+              },
+            ],
+          }),
+        });
+        const invalidConfigurationBody =
+          (await invalidConfigurationResponse.json()) as { error?: string };
+
+        expect(invalidConfigurationResponse.status).toBe(400);
+        expectNoStoreCacheControl(invalidConfigurationResponse);
+        expect(invalidConfigurationBody.error).toBe(
+          "At least two agent role configurations are required.",
+        );
+      } finally {
+        await runtime.stop();
+        await cleanup();
+      }
+    },
+    75_000,
+  );
+
+  it(
     "adds Secure to session cookies when auth requests are forwarded as HTTPS",
     async () => {
       const { databaseFilePath, cleanup } = await createRuntimeDatabaseFilePath();

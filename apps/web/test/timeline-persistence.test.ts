@@ -1,7 +1,9 @@
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import BetterSqlite3 from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 
 import { createWorkspaceTimelineStore } from "../src/persistence.ts";
@@ -133,6 +135,194 @@ describe("@orqis/web workspace timeline persistence", () => {
         );
       } finally {
         secondStore.close();
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+    75_000,
+  );
+
+  it(
+    "persists provider, model, and agent-role configuration across store restarts",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "orqis-web-agent-config-"));
+      const databaseFilePath = join(tempDir, "agent-config.db");
+
+      const firstStore = createWorkspaceTimelineStore({
+        databaseFilePath,
+      });
+
+      try {
+        const defaultConfiguration = firstStore.getAgentConfiguration();
+
+        expect(defaultConfiguration.providers[0]?.providerKey).toBe("openai");
+        expect(defaultConfiguration.models[0]?.modelKey).toBe("gpt-5");
+        expect(defaultConfiguration.agentRoles.length).toBeGreaterThanOrEqual(2);
+
+        const savedConfiguration = firstStore.saveAgentConfiguration({
+          providers: [
+            {
+              providerKey: "anthropic",
+              displayName: "Anthropic",
+              baseUrl: "https://api.anthropic.com/v1",
+            },
+          ],
+          models: [
+            {
+              modelKey: "claude-sonnet-4",
+              providerKey: "anthropic",
+              displayName: "Claude Sonnet 4",
+            },
+          ],
+          agentRoles: [
+            {
+              roleKey: "project_manager",
+              displayName: "Project Manager",
+              modelKey: "claude-sonnet-4",
+              responsibility: "Creates plans and owns approvals.",
+            },
+            {
+              roleKey: "reviewer",
+              displayName: "Reviewer",
+              modelKey: "claude-sonnet-4",
+              responsibility: "Finds regressions before release.",
+            },
+          ],
+        });
+
+        expect(savedConfiguration).toEqual({
+          providers: [
+            {
+              providerKey: "anthropic",
+              displayName: "Anthropic",
+              baseUrl: "https://api.anthropic.com/v1",
+            },
+          ],
+          models: [
+            {
+              modelKey: "claude-sonnet-4",
+              providerKey: "anthropic",
+              displayName: "Claude Sonnet 4",
+            },
+          ],
+          agentRoles: [
+            {
+              roleKey: "project_manager",
+              displayName: "Project Manager",
+              modelKey: "claude-sonnet-4",
+              responsibility: "Creates plans and owns approvals.",
+            },
+            {
+              roleKey: "reviewer",
+              displayName: "Reviewer",
+              modelKey: "claude-sonnet-4",
+              responsibility: "Finds regressions before release.",
+            },
+          ],
+        });
+      } finally {
+        firstStore.close();
+      }
+
+      const secondStore = createWorkspaceTimelineStore({
+        databaseFilePath,
+      });
+
+      try {
+        expect(secondStore.getAgentConfiguration()).toEqual({
+          providers: [
+            {
+              providerKey: "anthropic",
+              displayName: "Anthropic",
+              baseUrl: "https://api.anthropic.com/v1",
+            },
+          ],
+          models: [
+            {
+              modelKey: "claude-sonnet-4",
+              providerKey: "anthropic",
+              displayName: "Claude Sonnet 4",
+            },
+          ],
+          agentRoles: [
+            {
+              roleKey: "project_manager",
+              displayName: "Project Manager",
+              modelKey: "claude-sonnet-4",
+              responsibility: "Creates plans and owns approvals.",
+            },
+            {
+              roleKey: "reviewer",
+              displayName: "Reviewer",
+              modelKey: "claude-sonnet-4",
+              responsibility: "Finds regressions before release.",
+            },
+          ],
+        });
+      } finally {
+        secondStore.close();
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+    75_000,
+  );
+
+  it(
+    "upgrades legacy phase 2 databases without a migration ledger and seeds agent configuration defaults",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "orqis-web-agent-legacy-"));
+      const databaseFilePath = join(tempDir, "legacy.db");
+      const legacyDatabase = new BetterSqlite3(databaseFilePath);
+
+      try {
+        legacyDatabase.exec(
+          readFileSync(
+            new URL(
+              "../../../packages/db/migrations/0001_project_workspace_schema.sql",
+              import.meta.url,
+            ),
+            "utf8",
+          ),
+        );
+      } finally {
+        legacyDatabase.close();
+      }
+
+      const store = createWorkspaceTimelineStore({
+        databaseFilePath,
+      });
+
+      try {
+        const configuration = store.getAgentConfiguration();
+
+        expect(configuration.providers[0]?.providerKey).toBe("openai");
+        expect(configuration.models[0]?.modelKey).toBe("gpt-5");
+        expect(configuration.agentRoles.length).toBeGreaterThanOrEqual(2);
+      } finally {
+        store.close();
+      }
+
+      const upgradedDatabase = new BetterSqlite3(databaseFilePath, {
+        readonly: true,
+      });
+
+      try {
+        const migrationFiles = upgradedDatabase
+          .prepare(
+            [
+              "SELECT",
+              "  file_name AS fileName",
+              "FROM orqis_schema_migrations",
+              "ORDER BY file_name ASC",
+            ].join("\n"),
+          )
+          .all() as Array<{ fileName: string }>;
+
+        expect(migrationFiles.map((row) => row.fileName)).toEqual([
+          "0001_project_workspace_schema.sql",
+          "0002_agent_configuration.sql",
+        ]);
+      } finally {
+        upgradedDatabase.close();
         await rm(tempDir, { recursive: true, force: true });
       }
     },
