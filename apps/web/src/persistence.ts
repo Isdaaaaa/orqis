@@ -1588,6 +1588,11 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
       ownerType,
       ownerId,
     });
+    const workflowActor = resolveWorkflowActor({
+      ownerType,
+      ownerId,
+      runId,
+    });
 
     let transactionStarted = false;
 
@@ -1595,8 +1600,26 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
       this.database.exec("BEGIN IMMEDIATE");
       transactionStarted = true;
 
-      const task = this.requireWorkspaceTask(taskId, workspaceId);
+      let task = this.requireWorkspaceTask(taskId, workspaceId);
       this.assertAgentClaimMatchesAssignment(task, ownerType, ownerId);
+
+      // Allow shell-only submit flows by claiming claimable tasks on demand.
+      if (task.state === "todo" || task.state === "in_progress") {
+        await this.createTaskClaimServiceForAuditContext({
+          actorType: workflowActor.actorType,
+          actorId: workflowActor.actorId,
+          correlationRunId: runId,
+        }).claimTaskExecution({
+          taskId,
+          runId,
+          ownerType,
+          ownerId,
+        });
+
+        this.markRunRunningAfterClaim(runId);
+        task = this.requireWorkspaceTask(taskId, workspaceId);
+      }
+
       this.assertTaskOutputSubmissionAllowed(task, {
         runId,
         ownerType,
@@ -1615,11 +1638,6 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
       }
 
       const createdAt = new Date().toISOString();
-      const workflowActor = resolveWorkflowActor({
-        ownerType,
-        ownerId,
-        runId,
-      });
 
       const outputMessage = this.databaseHandle.auditContext.runWithContext(
         {
@@ -1710,6 +1728,18 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
     } catch (error) {
       if (transactionStarted) {
         this.database.exec("ROLLBACK");
+      }
+
+      if (error instanceof TaskClaimValidationError) {
+        throw new WorkspaceTimelineValidationError(error.message);
+      }
+
+      if (error instanceof TaskClaimNotFoundError) {
+        throw new WorkspaceTimelineNotFoundError(error.message);
+      }
+
+      if (error instanceof TaskClaimConflictError) {
+        throw new WorkspaceTaskClaimConflictError(error);
       }
 
       throw mapSqliteError(error);

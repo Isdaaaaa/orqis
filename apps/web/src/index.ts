@@ -841,6 +841,70 @@ function getWebAppHtml(): string {
       line-height: 1.45;
     }
 
+    .task-loop-shell {
+      border-top: 1px solid var(--panel-border);
+      background: rgba(12, 17, 28, 0.85);
+      backdrop-filter: blur(8px);
+      padding: 0.8rem 1.15rem 0.85rem;
+      display: grid;
+      gap: 0.6rem;
+    }
+
+    .task-loop-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+    }
+
+    .task-loop-header h3 {
+      margin: 0 0 0.2rem;
+      font-size: 0.95rem;
+    }
+
+    .task-loop-header p {
+      margin: 0;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      line-height: 1.4;
+      max-width: 800px;
+    }
+
+    .task-loop-grid {
+      display: grid;
+      gap: 0.6rem;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .task-loop-grid--decision {
+      grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
+    }
+
+    .task-loop-field--full {
+      grid-column: 1 / -1;
+    }
+
+    .task-loop-message-label {
+      font-size: 0.76rem;
+    }
+
+    #task-output-content {
+      min-height: 72px;
+    }
+
+    #task-approval-summary {
+      min-height: 64px;
+      resize: vertical;
+    }
+
+    .task-loop-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.45rem;
+      flex-wrap: wrap;
+    }
+
     .composer-shell {
       border-top: 1px solid var(--panel-border);
       background: rgba(14, 19, 31, 0.93);
@@ -886,6 +950,7 @@ function getWebAppHtml(): string {
 
       .timeline-region,
       .detail-region,
+      .task-loop-shell,
       .composer-shell {
         padding-left: 0.95rem;
         padding-right: 0.95rem;
@@ -948,6 +1013,11 @@ function getWebAppHtml(): string {
       }
 
       .composer-topline {
+        grid-template-columns: 1fr;
+      }
+
+      .task-loop-grid,
+      .task-loop-grid--decision {
         grid-template-columns: 1fr;
       }
 
@@ -1038,6 +1108,54 @@ function getWebAppHtml(): string {
         <ul id="messages"></ul>
       </section>
 
+      <section id="task-loop-shell" class="task-loop-shell" hidden>
+        <div class="task-loop-header">
+          <div>
+            <h3>Task Approval Loop</h3>
+            <p id="task-loop-meta">Create a plan to generate tasks, then submit outputs and record approval decisions here.</p>
+          </div>
+          <button id="reload-tasks" class="secondary" type="button">Reload tasks</button>
+        </div>
+        <div class="task-loop-grid">
+          <label>Task
+            <select id="task-select"></select>
+          </label>
+          <label>Run ID
+            <input id="task-run-id" placeholder="Run ID for output submission" />
+          </label>
+          <label>Owner type
+            <select id="task-owner-type">
+              <option value="agent">agent</option>
+              <option value="run">run</option>
+              <option value="user">user</option>
+            </select>
+          </label>
+          <label>Owner ID
+            <input id="task-owner-id" placeholder="backend_agent" />
+          </label>
+        </div>
+        <label class="task-loop-message-label" for="task-output-content">Task output</label>
+        <textarea id="task-output-content" placeholder="Summarize work completed for the selected task..."></textarea>
+        <div class="task-loop-actions">
+          <button id="submit-task-output" type="button">Submit output</button>
+        </div>
+        <div class="task-loop-grid task-loop-grid--decision">
+          <label>Decision
+            <select id="task-approval-decision">
+              <option value="approved">approved</option>
+              <option value="revision_requested">revision_requested</option>
+              <option value="rejected">rejected</option>
+            </select>
+          </label>
+          <label class="task-loop-field--full">Decision summary (required for revision/rejected)
+            <textarea id="task-approval-summary" placeholder="Explain revision or rejection details for the assigned specialist."></textarea>
+          </label>
+        </div>
+        <div class="task-loop-actions">
+          <button id="apply-task-decision" type="button">Apply decision</button>
+        </div>
+      </section>
+
       <section id="detail-region" class="detail-region" hidden></section>
 
       <footer id="composer-shell" class="composer-shell">
@@ -1081,6 +1199,18 @@ function getWebAppHtml(): string {
     const panelSubtitle = document.getElementById("panel-subtitle");
     const sessionActor = document.getElementById("session-actor");
     const timelineRegion = document.getElementById("timeline-region");
+    const taskLoopShell = document.getElementById("task-loop-shell");
+    const taskLoopMeta = document.getElementById("task-loop-meta");
+    const reloadTasksButton = document.getElementById("reload-tasks");
+    const taskSelectInput = document.getElementById("task-select");
+    const taskRunIdInput = document.getElementById("task-run-id");
+    const taskOwnerTypeInput = document.getElementById("task-owner-type");
+    const taskOwnerIdInput = document.getElementById("task-owner-id");
+    const taskOutputInput = document.getElementById("task-output-content");
+    const submitTaskOutputButton = document.getElementById("submit-task-output");
+    const taskApprovalDecisionInput = document.getElementById("task-approval-decision");
+    const taskApprovalSummaryInput = document.getElementById("task-approval-summary");
+    const applyTaskDecisionButton = document.getElementById("apply-task-decision");
     const detailRegion = document.getElementById("detail-region");
     const composerShell = document.getElementById("composer-shell");
     const actorTypeInput = document.getElementById("actor-type");
@@ -1163,9 +1293,13 @@ function getWebAppHtml(): string {
     let projects = [];
     let selectedProjectId = "";
     let activeViewId = "main-chat";
+    let sessionActorId = "";
     let agentConfiguration = null;
     let agentConfigurationLoading = false;
     let agentConfigurationError = "";
+    let workspaceTasks = [];
+    let selectedTaskId = "";
+    let taskLoopLoading = false;
 
     const setStatus = (message, isError = false) => {
       status.textContent = message;
@@ -1833,6 +1967,239 @@ function getWebAppHtml(): string {
       return null;
     };
 
+    const getSelectedTask = () => {
+      for (const task of workspaceTasks) {
+        if (task.id === selectedTaskId) {
+          return task;
+        }
+      }
+
+      return null;
+    };
+
+    const tasksUrl = () => {
+      const selectedProject = getSelectedProject();
+
+      if (selectedProject === null) {
+        return null;
+      }
+
+      return "/api/workspaces/" + encodeURIComponent(selectedProject.workspaceId) + "/tasks";
+    };
+
+    const taskOutputUrl = (taskId) => {
+      const selectedProject = getSelectedProject();
+
+      if (selectedProject === null) {
+        return null;
+      }
+
+      return (
+        "/api/workspaces/" +
+        encodeURIComponent(selectedProject.workspaceId) +
+        "/tasks/" +
+        encodeURIComponent(taskId) +
+        "/output"
+      );
+    };
+
+    const taskApprovalUrl = (taskId) => {
+      const selectedProject = getSelectedProject();
+
+      if (selectedProject === null) {
+        return null;
+      }
+
+      return (
+        "/api/workspaces/" +
+        encodeURIComponent(selectedProject.workspaceId) +
+        "/tasks/" +
+        encodeURIComponent(taskId) +
+        "/approval"
+      );
+    };
+
+    const resolveSuggestedOwnerType = (task) => {
+      if (task.lockOwnerType === "agent" || task.lockOwnerType === "run" || task.lockOwnerType === "user") {
+        return task.lockOwnerType;
+      }
+
+      if ((task.assignment?.roleKey ?? task.ownerRole ?? "").trim().length > 0) {
+        return "agent";
+      }
+
+      return "run";
+    };
+
+    const resolveSuggestedOwnerId = (task, ownerType, runId) => {
+      if (ownerType === "agent") {
+        return (
+          task.lockOwnerId ??
+          task.assignment?.roleKey ??
+          task.ownerRole ??
+          ""
+        );
+      }
+
+      if (ownerType === "user") {
+        return task.lockOwnerId ?? sessionActorId;
+      }
+
+      return task.lockOwnerId ?? runId;
+    };
+
+    const updateTaskLoopState = () => {
+      const selectedProject = getSelectedProject();
+      const taskLoopEnabled =
+        selectedProject !== null && activeViewId === "main-chat";
+      const selectedTask = getSelectedTask();
+      const hasTask = selectedTask !== null;
+
+      taskLoopShell.hidden = !taskLoopEnabled;
+
+      reloadTasksButton.disabled = !taskLoopEnabled || taskLoopLoading;
+      taskSelectInput.disabled =
+        !taskLoopEnabled || taskLoopLoading || workspaceTasks.length === 0;
+      taskRunIdInput.disabled = !taskLoopEnabled || taskLoopLoading || !hasTask;
+      taskOwnerTypeInput.disabled = !taskLoopEnabled || taskLoopLoading || !hasTask;
+      taskOwnerIdInput.disabled = !taskLoopEnabled || taskLoopLoading || !hasTask;
+      taskOutputInput.disabled = !taskLoopEnabled || taskLoopLoading || !hasTask;
+      submitTaskOutputButton.disabled = !taskLoopEnabled || taskLoopLoading || !hasTask;
+      taskApprovalDecisionInput.disabled = !taskLoopEnabled || taskLoopLoading || !hasTask;
+      taskApprovalSummaryInput.disabled = !taskLoopEnabled || taskLoopLoading || !hasTask;
+      applyTaskDecisionButton.disabled = !taskLoopEnabled || taskLoopLoading || !hasTask;
+    };
+
+    const applySelectedTaskDefaults = () => {
+      const selectedTask = getSelectedTask();
+
+      if (selectedTask === null) {
+        taskLoopMeta.textContent =
+          "Create a plan to generate tasks, then submit outputs and record approval decisions here.";
+        taskRunIdInput.value = "";
+        taskOwnerTypeInput.value = "agent";
+        taskOwnerIdInput.value = "";
+        taskOutputInput.placeholder =
+          "Summarize work completed for the selected task...";
+        updateTaskLoopState();
+        return;
+      }
+
+      const runId =
+        selectedTask.executionRunId ??
+        selectedTask.checkoutRunId ??
+        selectedTask.runId ??
+        "";
+      const ownerType = resolveSuggestedOwnerType(selectedTask);
+      const ownerId = resolveSuggestedOwnerId(selectedTask, ownerType, runId);
+      const assignedRole =
+        selectedTask.assignment?.roleDisplayName ??
+        selectedTask.assignment?.roleKey ??
+        selectedTask.ownerDisplayName ??
+        selectedTask.ownerRole ??
+        "unassigned";
+
+      taskLoopMeta.textContent =
+        "Selected task: " +
+        selectedTask.title +
+        " | state: " +
+        selectedTask.state +
+        " | assigned role: " +
+        assignedRole +
+        " | run: " +
+        (runId.length > 0 ? runId : "none");
+      taskRunIdInput.value = runId;
+      taskOwnerTypeInput.value = ownerType;
+      taskOwnerIdInput.value = ownerId;
+      taskOutputInput.placeholder =
+        'Summarize work completed for "' +
+        selectedTask.title +
+        '" before requesting approval.';
+      updateTaskLoopState();
+    };
+
+    const renderTaskOptions = (preferredTaskId = selectedTaskId) => {
+      taskSelectInput.innerHTML = "";
+
+      if (workspaceTasks.length === 0) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "No tasks yet";
+        option.disabled = true;
+        option.selected = true;
+        taskSelectInput.appendChild(option);
+        selectedTaskId = "";
+        applySelectedTaskDefaults();
+        return;
+      }
+
+      for (const task of workspaceTasks) {
+        const option = document.createElement("option");
+        option.value = task.id;
+        option.textContent = "[" + task.state + "] " + task.title;
+        taskSelectInput.appendChild(option);
+      }
+
+      const hasPreferredTask = workspaceTasks.some(
+        (task) => task.id === preferredTaskId,
+      );
+      selectedTaskId = hasPreferredTask
+        ? preferredTaskId
+        : workspaceTasks[0].id;
+      taskSelectInput.value = selectedTaskId;
+      applySelectedTaskDefaults();
+    };
+
+    const reloadTasks = async (announce = true) => {
+      if (activeViewId !== "main-chat") {
+        return;
+      }
+
+      const selectedProject = getSelectedProject();
+      const url = tasksUrl();
+
+      if (selectedProject === null || url === null) {
+        workspaceTasks = [];
+        selectedTaskId = "";
+        renderTaskOptions();
+
+        if (announce) {
+          setStatus("Create and select a project first.", true);
+        }
+        return;
+      }
+
+      taskLoopLoading = true;
+      updateTaskLoopState();
+
+      try {
+        const response = await fetch(url);
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error ?? "Failed to load tasks.");
+        }
+
+        workspaceTasks = Array.isArray(payload.tasks) ? payload.tasks : [];
+        renderTaskOptions(selectedTaskId);
+
+        if (announce) {
+          setStatus(
+            "Task loop loaded for " +
+              selectedProject.projectName +
+              " (" +
+              workspaceTasks.length +
+              " task" +
+              (workspaceTasks.length === 1 ? "" : "s") +
+              ").",
+          );
+        }
+      } finally {
+        taskLoopLoading = false;
+        updateTaskLoopState();
+      }
+    };
+
     const getProjectBadge = (projectName) => {
       const parts = String(projectName)
         .trim()
@@ -1885,6 +2252,10 @@ function getWebAppHtml(): string {
           try {
             if (isTimelineView(activeViewId)) {
               await reloadTimeline();
+
+              if (activeViewId === "main-chat") {
+                await reloadTasks(false);
+              }
             }
           } catch (error) {
             setStatus(error instanceof Error ? error.message : String(error), true);
@@ -1904,6 +2275,7 @@ function getWebAppHtml(): string {
 
       const showTimeline = view.timeline === true;
       timelineRegion.hidden = !showTimeline;
+      taskLoopShell.hidden = !showTimeline || activeViewId !== "main-chat";
       detailRegion.hidden = showTimeline;
       composerShell.hidden = !showTimeline;
       createPlanButton.hidden = activeViewId !== "main-chat";
@@ -1929,6 +2301,9 @@ function getWebAppHtml(): string {
         actorTypeInput.disabled = true;
         actorIdInput.disabled = true;
         contentInput.disabled = true;
+        workspaceTasks = [];
+        selectedTaskId = "";
+        renderTaskOptions();
         return;
       }
 
@@ -1941,6 +2316,7 @@ function getWebAppHtml(): string {
       actorTypeInput.disabled = !timelineEnabled;
       actorIdInput.disabled = !timelineEnabled;
       contentInput.disabled = !timelineEnabled;
+      updateTaskLoopState();
     };
 
     const timelineUrl = () => {
@@ -2052,6 +2428,10 @@ function getWebAppHtml(): string {
         await reloadTimeline(false);
       }
 
+      if (activeViewId === "main-chat") {
+        await reloadTasks(false);
+      }
+
       return true;
     };
 
@@ -2067,6 +2447,7 @@ function getWebAppHtml(): string {
       const actorId = typeof payload.session?.actorId === "string"
         ? payload.session.actorId
         : "";
+      sessionActorId = actorId;
       sessionActor.textContent = actorId.length > 0 ? "Signed in as " + actorId : "";
       return true;
     };
@@ -2146,6 +2527,153 @@ function getWebAppHtml(): string {
       setStatus("Message stored.");
     };
 
+    const submitTaskOutput = async () => {
+      if (activeViewId !== "main-chat") {
+        setStatus("Switch to Main Chat to submit task output.", true);
+        return;
+      }
+
+      const selectedTask = getSelectedTask();
+      const output = taskOutputInput.value.trim();
+
+      if (selectedTask === null) {
+        setStatus("Create a plan and select a task first.", true);
+        return;
+      }
+
+      if (output.length === 0) {
+        setStatus("Task output is required.", true);
+        return;
+      }
+
+      const url = taskOutputUrl(selectedTask.id);
+
+      if (url === null) {
+        setStatus("Create and select a project first.", true);
+        return;
+      }
+
+      const runId = taskRunIdInput.value.trim();
+
+      if (runId.length === 0) {
+        setStatus("Run ID is required to submit task output.", true);
+        return;
+      }
+
+      const ownerType = taskOwnerTypeInput.value;
+      let ownerId = taskOwnerIdInput.value.trim();
+
+      if (ownerType === "run" && ownerId.length === 0) {
+        ownerId = runId;
+      } else if (ownerType === "user" && ownerId.length === 0) {
+        ownerId = sessionActorId;
+      }
+
+      if (
+        (ownerType === "agent" || ownerType === "user") &&
+        ownerId.length === 0
+      ) {
+        setStatus("Owner ID is required for agent/user task output submissions.", true);
+        return;
+      }
+
+      submitTaskOutputButton.disabled = true;
+      applyTaskDecisionButton.disabled = true;
+      setStatus("Submitting task output...");
+
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            runId,
+            ownerType,
+            ownerId: ownerId.length > 0 ? ownerId : undefined,
+            output,
+          }),
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error ?? "Failed to submit task output.");
+        }
+
+        taskOutputInput.value = "";
+        await Promise.all([reloadTimeline(false), reloadTasks(false)]);
+
+        const approvalStatus = typeof payload.approval?.status === "string"
+          ? payload.approval.status
+          : "pending";
+        setStatus("Task output submitted. Approval status: " + approvalStatus + ".");
+      } finally {
+        submitTaskOutputButton.disabled = false;
+        applyTaskDecisionButton.disabled = false;
+      }
+    };
+
+    const applyTaskDecision = async () => {
+      if (activeViewId !== "main-chat") {
+        setStatus("Switch to Main Chat to apply task approvals.", true);
+        return;
+      }
+
+      const selectedTask = getSelectedTask();
+
+      if (selectedTask === null) {
+        setStatus("Create a plan and select a task first.", true);
+        return;
+      }
+
+      const url = taskApprovalUrl(selectedTask.id);
+
+      if (url === null) {
+        setStatus("Create and select a project first.", true);
+        return;
+      }
+
+      const decision = taskApprovalDecisionInput.value;
+      const decisionSummary = taskApprovalSummaryInput.value.trim();
+
+      if (
+        (decision === "rejected" || decision === "revision_requested") &&
+        decisionSummary.length === 0
+      ) {
+        setStatus(
+          'Decision summary is required for "' + decision + '" decisions.',
+          true,
+        );
+        return;
+      }
+
+      submitTaskOutputButton.disabled = true;
+      applyTaskDecisionButton.disabled = true;
+      setStatus("Recording task approval decision...");
+
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            decision,
+            decisionSummary:
+              decisionSummary.length > 0 ? decisionSummary : undefined,
+          }),
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error ?? "Failed to apply task decision.");
+        }
+
+        taskApprovalSummaryInput.value = "";
+        await Promise.all([reloadTimeline(false), reloadTasks(false)]);
+        setStatus("Decision recorded: " + decision + ".");
+      } finally {
+        submitTaskOutputButton.disabled = false;
+        applyTaskDecisionButton.disabled = false;
+      }
+    };
+
     const createPlan = async () => {
       if (activeViewId !== "main-chat") {
         setStatus("Switch to Main Chat to create a Project Manager plan.", true);
@@ -2187,6 +2715,7 @@ function getWebAppHtml(): string {
 
       contentInput.value = "";
       await reloadTimeline(false);
+      await reloadTasks(false);
       setStatus(
         "Plan created with " +
           taskCount +
@@ -2212,6 +2741,10 @@ function getWebAppHtml(): string {
 
       if (isTimelineView(activeViewId)) {
         await reloadTimeline();
+
+        if (activeViewId === "main-chat") {
+          await reloadTasks(false);
+        }
         return;
       }
 
@@ -2273,10 +2806,65 @@ function getWebAppHtml(): string {
 
         if (isTimelineView(activeViewId)) {
           await reloadTimeline();
+
+          if (activeViewId === "main-chat") {
+            await reloadTasks(false);
+          }
           return;
         }
 
         setStatus("Project selected.");
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : String(error), true);
+      }
+    });
+
+    taskSelectInput.addEventListener("change", () => {
+      selectedTaskId = taskSelectInput.value;
+      applySelectedTaskDefaults();
+    });
+
+    taskRunIdInput.addEventListener("input", () => {
+      if (taskOwnerTypeInput.value === "run") {
+        taskOwnerIdInput.value = taskRunIdInput.value.trim();
+      }
+    });
+
+    taskOwnerTypeInput.addEventListener("change", () => {
+      const selectedTask = getSelectedTask();
+
+      if (selectedTask === null) {
+        taskOwnerIdInput.value = "";
+        return;
+      }
+
+      const runId = taskRunIdInput.value.trim();
+      taskOwnerIdInput.value = resolveSuggestedOwnerId(
+        selectedTask,
+        taskOwnerTypeInput.value,
+        runId,
+      );
+    });
+
+    reloadTasksButton.addEventListener("click", async () => {
+      try {
+        await reloadTasks();
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : String(error), true);
+      }
+    });
+
+    submitTaskOutputButton.addEventListener("click", async () => {
+      try {
+        await submitTaskOutput();
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : String(error), true);
+      }
+    });
+
+    applyTaskDecisionButton.addEventListener("click", async () => {
+      try {
+        await applyTaskDecision();
       } catch (error) {
         setStatus(error instanceof Error ? error.message : String(error), true);
       }

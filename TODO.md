@@ -261,14 +261,16 @@ Safe to defer:
 #### Hardening before Phase 4
 
 Must finish before Phase 4:
-- [ ] Expose the task output approval loop in the workspace shell so users can submit outputs and approve/reject them without calling runtime APIs directly
+- [x] Expose the task output approval loop in the workspace shell so users can submit outputs and approve/reject them without calling runtime APIs directly
+  - Summary: Added a Main Chat `Task Approval Loop` shell panel that loads workspace tasks, captures run/owner/output payloads, and submits outputs through the authenticated runtime task-output API.
+  - Summary (follow-up): Added in-shell decision controls for `approved`, `revision_requested`, and `rejected` actions with required summary enforcement for revision/rejection before posting approval decisions.
+  - Summary (follow-up): Removed the remaining manual-checkout dependency by auto-claiming claimable task executions during output submission, then added runtime coverage proving output/resubmission works from planned tasks without separate checkout calls.
+  - Summary (follow-up): Added runtime shell coverage that asserts authenticated landing HTML now includes task-loop controls so the approval workflow is exposed in the workspace UI contract.
+  - Changed: `apps/web/src/index.ts`, `apps/web/src/persistence.ts`, `apps/web/test/runtime.test.ts`, `README.md`, `TODO.md`.
 
 Safe to defer:
 - [ ] Add runtime regression coverage for the `decision: "rejected"` approval path (including task/run state effects and PM-visible timeline messaging) now that persistence coverage exists
 - [ ] Add runtime/persistence regression coverage for multi-approval sequencing (for example one task `revision_requested` while another run-linked approval remains unresolved) so waiting_approval gating and follow-up claim behavior stay intentional and stable
-
-Move to later phase:
-- [ ] Align workspace agent-thread navigation with saved role mappings so customized planner owner roles have matching visible thread labels and navigation entries
 
 ## Phase 4: Workflow hardening and integration
 
@@ -284,6 +286,9 @@ Move to later phase:
 
 - [ ] Add query helpers for issue/task-centric run history so timeline and run drill-down share one contract
   - Acceptance criteria: timeline and run drill-down flows read issue/task-centric run history through one shared query contract.
+
+- [ ] Align workspace agent-thread navigation with saved role mappings
+  - Acceptance criteria: customized planner owner roles have matching visible thread labels and navigation entries.
 
 - [ ] Add browser e2e checks for bootstrap + project + workspace + approval happy path
   - Acceptance criteria: Playwright suite covers one full user journey and runs in CI.
