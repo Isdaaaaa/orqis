@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Harden local session cookie/auth response headers for tunnel exposure (`Secure` cookie behavior when request origin is HTTPS and `Cache-Control: no-store` on auth-sensitive HTML/API responses).
+Start Phase 3 with persistent provider/model/agent-role configuration so PM planning and task assignment can use durable settings instead of hard-coded defaults.
 
 ## Completed
 
