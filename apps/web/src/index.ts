@@ -3052,6 +3052,10 @@ function getWebAppHtml(): string {
 
       const selectedProject = renderProjectOptions(preferredProjectId ?? projectSelect.value);
 
+      if (activeViewId === "assigned-agents") {
+        await loadAgentConfiguration(false);
+      }
+
       if (selectedProject === null) {
         return false;
       }

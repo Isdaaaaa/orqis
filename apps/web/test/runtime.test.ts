@@ -213,6 +213,12 @@ describe("@orqis/web runtime", () => {
           "const initialWorkspaceContext = resolveInitialWorkspaceContext();",
         );
         expect(firstLandingPage).toContain(
+          'if (activeViewId === "assigned-agents") {',
+        );
+        expect(firstLandingPage).toContain(
+          "await loadAgentConfiguration(false);",
+        );
+        expect(firstLandingPage).toContain(
           "window.history.replaceState(null, \"\", nextRelativeUrl);",
         );
         expectNoStoreCacheControl(firstLandingResponse);
