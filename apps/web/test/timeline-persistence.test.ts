@@ -8,6 +8,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   createWorkspaceTimelineStore,
+  WorkspaceTaskAssignmentConflictError,
+  WorkspaceTaskClaimConflictError,
   WorkspaceTimelineValidationError,
 } from "../src/persistence.ts";
 import { WORKSPACE_CI_INTEGRATION_TIMEOUT_MS } from "./integration-timeouts.ts";
@@ -389,6 +391,18 @@ describe("@orqis/web workspace timeline persistence", () => {
           "backend_agent",
           "reviewer",
         ]);
+        expect(plan.tasks.map((task) => task.assignment.roleKey)).toEqual([
+          "frontend_agent",
+          "backend_agent",
+          "reviewer",
+        ]);
+        expect(plan.tasks[1]).toMatchObject({
+          ownerDisplayName: "Backend Agent",
+          assignment: {
+            roleDisplayName: "Backend Agent",
+            modelKey: "gpt-5",
+          },
+        });
       } finally {
         firstStore.close();
       }
@@ -403,6 +417,7 @@ describe("@orqis/web workspace timeline persistence", () => {
 
       try {
         const messages = secondStore.listWorkspaceMessages(createdProject.workspaceId);
+        const tasks = secondStore.listWorkspaceTasks(createdProject.workspaceId);
 
         expect(messages).toHaveLength(2);
         expect(messages.map((message) => message.actorType)).toEqual([
@@ -411,6 +426,16 @@ describe("@orqis/web workspace timeline persistence", () => {
         ]);
         expect(messages[0]?.content).toBe("Implement the first approval workflow");
         expect(messages[1]?.content).toContain("Project Manager plan for:");
+        expect(tasks).toHaveLength(3);
+        expect(tasks[1]).toMatchObject({
+          ownerRole: "backend_agent",
+          ownerDisplayName: "Backend Agent",
+          assignment: {
+            roleKey: "backend_agent",
+            roleDisplayName: "Backend Agent",
+            modelKey: "gpt-5",
+          },
+        });
       } finally {
         secondStore.close();
       }
@@ -473,8 +498,220 @@ describe("@orqis/web workspace timeline persistence", () => {
             state: "todo",
           },
         ]);
+
+        const assignments = database
+          .prepare(
+            [
+              "SELECT",
+              "  role_key AS roleKey,",
+              "  role_display_name AS roleDisplayName,",
+              "  model_key AS modelKey",
+              "FROM task_assignments",
+              "ORDER BY rowid ASC",
+            ].join("\n"),
+          )
+          .all() as Array<{
+          roleKey: string;
+          roleDisplayName: string;
+          modelKey: string | null;
+        }>;
+
+        expect(assignments).toEqual([
+          {
+            roleKey: "frontend_agent",
+            roleDisplayName: "Frontend Agent",
+            modelKey: "gpt-5",
+          },
+          {
+            roleKey: "backend_agent",
+            roleDisplayName: "Backend Agent",
+            modelKey: "gpt-5",
+          },
+          {
+            roleKey: "reviewer",
+            roleDisplayName: "Reviewer",
+            modelKey: "gpt-5",
+          },
+        ]);
       } finally {
         database.close();
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
+  );
+
+  it(
+    "lists role-mapped tasks and rejects competing execution claims deterministically",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "orqis-web-task-claims-"));
+      const databaseFilePath = join(tempDir, "task-claims.db");
+      const store = createWorkspaceTimelineStore({
+        databaseFilePath,
+      });
+
+      try {
+        const project = store.createProject({
+          name: "Task Claims Project",
+        });
+        const plan = store.createProjectManagerPlan({
+          workspaceId: project.workspaceId,
+          projectId: project.projectId,
+          goal: "Implement deterministic task checkout",
+          requestedByActorId: "owner",
+        });
+
+        const backendTask = plan.tasks.find(
+          (task) => task.ownerRole === "backend_agent",
+        );
+
+        if (backendTask === undefined) {
+          throw new Error("expected backend task for claim assertions");
+        }
+
+        const listedTasks = store.listWorkspaceTasks(project.workspaceId);
+        expect(listedTasks.map((task) => task.assignment?.roleKey)).toContain(
+          "backend_agent",
+        );
+
+        const claimedTask = await store.claimTaskExecution({
+          workspaceId: project.workspaceId,
+          taskId: backendTask.id,
+          runId: plan.runId,
+          ownerType: "agent",
+          ownerId: "backend_agent",
+          claimedAt: "2026-03-12T08:00:00.000Z",
+        });
+
+        expect(claimedTask).toMatchObject({
+          id: backendTask.id,
+          state: "in_progress",
+          lockOwnerType: "agent",
+          lockOwnerId: "backend_agent",
+          checkoutRunId: plan.runId,
+          executionRunId: plan.runId,
+        });
+
+        await expect(
+          store.claimTaskExecution({
+            workspaceId: project.workspaceId,
+            taskId: backendTask.id,
+            runId: "run-competing",
+            ownerType: "agent",
+            ownerId: "reviewer",
+          }),
+        ).rejects.toMatchObject({
+          code: "task_assigned_to_another_role",
+          taskId: backendTask.id,
+          assignedRoleKey: "backend_agent",
+          attemptedRoleKey: "reviewer",
+        } satisfies Partial<WorkspaceTaskAssignmentConflictError>);
+
+        await expect(
+          store.claimTaskExecution({
+            workspaceId: project.workspaceId,
+            taskId: backendTask.id,
+            runId: "run-competing",
+            ownerType: "agent",
+            ownerId: "backend_agent",
+          }),
+        ).rejects.toMatchObject({
+          code: "task_execution_locked",
+          taskId: backendTask.id,
+          currentExecutionRunId: plan.runId,
+          currentCheckoutRunId: plan.runId,
+        } satisfies Partial<WorkspaceTaskClaimConflictError>);
+
+        const releasedTask = await store.releaseTaskExecution({
+          workspaceId: project.workspaceId,
+          taskId: backendTask.id,
+          runId: plan.runId,
+          ownerType: "agent",
+          ownerId: "backend_agent",
+        });
+
+        expect(releasedTask).toMatchObject({
+          id: backendTask.id,
+          state: "in_progress",
+          checkoutRunId: plan.runId,
+          executionRunId: null,
+          lockOwnerType: "agent",
+          lockOwnerId: "backend_agent",
+        });
+      } finally {
+        store.close();
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
+  );
+
+  it(
+    "rejects run-owned claim and release payloads when ownerId diverges from runId",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "orqis-web-run-owner-"));
+      const databaseFilePath = join(tempDir, "run-owner.db");
+      const store = createWorkspaceTimelineStore({
+        databaseFilePath,
+      });
+
+      try {
+        const project = store.createProject({
+          name: "Run Owner Validation Project",
+        });
+        const plan = store.createProjectManagerPlan({
+          workspaceId: project.workspaceId,
+          projectId: project.projectId,
+          goal: "Validate run-owned task claims",
+          requestedByActorId: "owner",
+        });
+        const task = plan.tasks[0];
+
+        if (task === undefined) {
+          throw new Error("expected task for run-owner validation assertions");
+        }
+
+        await expect(
+          store.claimTaskExecution({
+            workspaceId: project.workspaceId,
+            taskId: task.id,
+            runId: plan.runId,
+            ownerType: "run",
+            ownerId: "run-other",
+          }),
+        ).rejects.toMatchObject({
+          message: "ownerId must equal runId when ownerType is run.",
+        });
+
+        const claimedTask = await store.claimTaskExecution({
+          workspaceId: project.workspaceId,
+          taskId: task.id,
+          runId: plan.runId,
+          ownerType: "run",
+          ownerId: plan.runId,
+        });
+
+        expect(claimedTask).toMatchObject({
+          id: task.id,
+          lockOwnerType: "run",
+          lockOwnerId: plan.runId,
+          checkoutRunId: plan.runId,
+          executionRunId: plan.runId,
+        });
+
+        await expect(
+          store.releaseTaskExecution({
+            workspaceId: project.workspaceId,
+            taskId: task.id,
+            runId: plan.runId,
+            ownerType: "run",
+            ownerId: "run-other",
+          }),
+        ).rejects.toMatchObject({
+          message: "ownerId must equal runId when ownerType is run.",
+        });
+      } finally {
+        store.close();
         await rm(tempDir, { recursive: true, force: true });
       }
     },
@@ -535,9 +772,119 @@ describe("@orqis/web workspace timeline persistence", () => {
         expect(migrationFiles.map((row) => row.fileName)).toEqual([
           "0001_project_workspace_schema.sql",
           "0002_agent_configuration.sql",
+          "0003_task_assignments.sql",
         ]);
       } finally {
         upgradedDatabase.close();
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
+  );
+
+  it(
+    "backfills assignment snapshots for legacy tasks when 0003 migrations are applied",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "orqis-web-task-backfill-"));
+      const databaseFilePath = join(tempDir, "legacy-backfill.db");
+      const legacyDatabase = new BetterSqlite3(databaseFilePath);
+
+      try {
+        legacyDatabase.function("orqis_audit_actor_type", () => null);
+        legacyDatabase.function("orqis_audit_actor_id", () => null);
+        legacyDatabase.function("orqis_audit_correlation_run_id", () => null);
+        legacyDatabase.exec(
+          readFileSync(
+            new URL(
+              "../../../packages/db/migrations/0001_project_workspace_schema.sql",
+              import.meta.url,
+            ),
+            "utf8",
+          ),
+        );
+        legacyDatabase.exec(
+          readFileSync(
+            new URL(
+              "../../../packages/db/migrations/0002_agent_configuration.sql",
+              import.meta.url,
+            ),
+            "utf8",
+          ),
+        );
+        legacyDatabase
+          .prepare("INSERT INTO projects (id, slug, name) VALUES (?, ?, ?)")
+          .run("project_legacy", "project-legacy", "Legacy Project");
+        legacyDatabase
+          .prepare("INSERT INTO workspaces (id, project_id, name) VALUES (?, ?, ?)")
+          .run("workspace_legacy", "project_legacy", "Legacy Workspace");
+        legacyDatabase
+          .prepare(
+            "INSERT INTO runs (id, project_id, workspace_id, status) VALUES (?, ?, ?, ?)",
+          )
+          .run("run_legacy", "project_legacy", "workspace_legacy", "planned");
+        legacyDatabase
+          .prepare(
+            "INSERT INTO provider_configs (provider_key, display_name) VALUES (?, ?)",
+          )
+          .run("openai", "OpenAI");
+        legacyDatabase
+          .prepare(
+            "INSERT INTO model_configs (model_key, provider_key, display_name) VALUES (?, ?, ?)",
+          )
+          .run("gpt-5", "openai", "GPT-5");
+        legacyDatabase
+          .prepare(
+            "INSERT INTO agent_profiles (role_key, display_name, model_key, responsibility) VALUES (?, ?, ?, ?)",
+          )
+          .run(
+            "backend_agent",
+            "Backend Agent",
+            "gpt-5",
+            "Owns runtime behavior",
+          );
+        legacyDatabase
+          .prepare(
+            [
+              "INSERT INTO tasks",
+              "  (id, project_id, workspace_id, run_id, owner_role, title, state, created_at, updated_at)",
+              "VALUES",
+              "  (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ].join("\n"),
+          )
+          .run(
+            "task_legacy",
+            "project_legacy",
+            "workspace_legacy",
+            "run_legacy",
+            "backend_agent",
+            "Legacy task",
+            "todo",
+            "2026-03-10T08:00:00.000Z",
+            "2026-03-10T08:00:00.000Z",
+          );
+      } finally {
+        legacyDatabase.close();
+      }
+
+      const store = createWorkspaceTimelineStore({
+        databaseFilePath,
+      });
+
+      try {
+        const tasks = store.listWorkspaceTasks("workspace_legacy");
+        expect(tasks).toHaveLength(1);
+        expect(tasks[0]).toMatchObject({
+          ownerRole: "backend_agent",
+          ownerDisplayName: "Backend Agent",
+          assignment: {
+            roleKey: "backend_agent",
+            roleDisplayName: "Backend Agent",
+            modelKey: "gpt-5",
+            roleResponsibility: "Owns runtime behavior",
+          },
+        });
+      } finally {
+        store.close();
         await rm(tempDir, { recursive: true, force: true });
       }
     },

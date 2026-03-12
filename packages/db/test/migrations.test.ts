@@ -145,6 +145,7 @@ describe("@orqis/db migration SQL", () => {
       "agent_profiles",
       "messages",
       "tasks",
+      "task_assignments",
       "approvals",
       "runs",
       "audit_events",
@@ -290,6 +291,46 @@ describe("@orqis/db migration SQL", () => {
     );
   });
 
+  it("captures first-class task assignment records with role snapshots", () => {
+    const taskAssignmentsTableSql = extractTableSql(
+      migrationSql,
+      "task_assignments",
+    );
+
+    expect(taskAssignmentsTableSql).toContain("`task_id` text NOT NULL");
+    expect(taskAssignmentsTableSql).toContain("`run_id` text");
+    expect(taskAssignmentsTableSql).toContain("`role_key` text NOT NULL");
+    expect(taskAssignmentsTableSql).toContain(
+      "`role_display_name` text NOT NULL",
+    );
+    expect(taskAssignmentsTableSql).toContain("`model_key` text");
+    expect(taskAssignmentsTableSql).toContain(
+      "`role_responsibility` text NOT NULL",
+    );
+    expect(taskAssignmentsTableSql).toContain(
+      "`assigned_by_actor_type` text NOT NULL",
+    );
+    expect(taskAssignmentsTableSql).toContain("`assigned_at` text NOT NULL");
+    expect(taskAssignmentsTableSql).toContain(
+      "FOREIGN KEY (`task_id`) REFERENCES `tasks` (`id`)",
+    );
+    expect(taskAssignmentsTableSql).toContain(
+      "FOREIGN KEY (`run_id`) REFERENCES `runs` (`id`)",
+    );
+    expect(taskAssignmentsTableSql).toContain(
+      "FOREIGN KEY (`project_id`, `workspace_id`, `task_id`) REFERENCES `tasks` (`project_id`, `workspace_id`, `id`)",
+    );
+    expect(migrationSql).toContain(
+      "CREATE UNIQUE INDEX `task_assignments_task_id_unique`",
+    );
+    expect(migrationSql).toContain(
+      "CREATE INDEX `task_assignments_workspace_role_assigned_at_idx`",
+    );
+    expect(migrationSql).toContain(
+      "CREATE INDEX `task_assignments_run_assigned_at_idx`",
+    );
+  });
+
   it("scopes parent lineage references to the same project/workspace", () => {
     const messagesTableSql = extractTableSql(migrationSql, "messages");
 
@@ -332,6 +373,8 @@ describe("@orqis/db migration SQL", () => {
       "messages_same_workspace_run_id_update",
       "tasks_same_workspace_run_refs_insert",
       "tasks_same_workspace_run_refs_update",
+      "task_assignments_same_workspace_refs_insert",
+      "task_assignments_same_workspace_refs_update",
       "approvals_same_workspace_refs_insert",
       "approvals_same_workspace_refs_update",
       "runs_workspace_ownership_update_guard",
@@ -392,6 +435,8 @@ describe("@orqis/db migration SQL", () => {
       "runs_audit_update",
       "tasks_audit_insert",
       "tasks_audit_update",
+      "task_assignments_audit_insert",
+      "task_assignments_audit_update",
       "approvals_audit_insert",
       "approvals_audit_update",
     ];
@@ -404,6 +449,8 @@ describe("@orqis/db migration SQL", () => {
     expect(migrationSql).toContain("'run.updated'");
     expect(migrationSql).toContain("'task.created'");
     expect(migrationSql).toContain("'task.updated'");
+    expect(migrationSql).toContain("'task_assignment.created'");
+    expect(migrationSql).toContain("'task_assignment.updated'");
     expect(migrationSql).toContain("'approval.created'");
     expect(migrationSql).toContain("'approval.updated'");
   });
@@ -455,6 +502,27 @@ describe("@orqis/db migration SQL", () => {
             "INSERT INTO tasks (id, project_id, workspace_id, title, state) VALUES (?, ?, ?, ?, ?)",
             ["task_1", "p1", "w1", "Audit me", "todo"],
           );
+          db.run(
+            [
+              "INSERT INTO task_assignments",
+              "  (id, project_id, workspace_id, task_id, run_id, role_key, role_display_name, model_key, role_responsibility, assigned_by_actor_type, assigned_by_actor_id)",
+              "VALUES",
+              "  (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ].join("\n"),
+            [
+              "assignment_1",
+              "p1",
+              "w1",
+              "task_1",
+              "run_1",
+              "backend_agent",
+              "Backend Agent",
+              "gpt-5",
+              "Owns runtime changes",
+              "agent",
+              "pm",
+            ],
+          );
         },
       );
 
@@ -475,6 +543,24 @@ describe("@orqis/db migration SQL", () => {
               "run_1",
               "2026-03-11T09:05:00.000Z",
               "task_1",
+            ],
+          );
+        },
+      );
+
+      auditContext.runWithContext(
+        {
+          actorType: "agent",
+          actorId: "pm",
+          correlationRunId: "run_1",
+        },
+        () => {
+          db.run(
+            "UPDATE task_assignments SET role_display_name = ?, updated_at = ? WHERE id = ?",
+            [
+              "Backend Specialist",
+              "2026-03-11T09:06:00.000Z",
+              "assignment_1",
             ],
           );
         },
@@ -557,6 +643,16 @@ describe("@orqis/db migration SQL", () => {
         },
         {
           actorType: "agent",
+          actorId: "pm",
+          runId: "run_1",
+          taskId: "task_1",
+          approvalId: null,
+          entityType: "task_assignment",
+          entityId: "assignment_1",
+          action: "task_assignment.created",
+        },
+        {
+          actorType: "agent",
           actorId: "backend_agent",
           runId: "run_1",
           taskId: "task_1",
@@ -564,6 +660,16 @@ describe("@orqis/db migration SQL", () => {
           entityType: "task",
           entityId: "task_1",
           action: "task.updated",
+        },
+        {
+          actorType: "agent",
+          actorId: "pm",
+          runId: "run_1",
+          taskId: "task_1",
+          approvalId: null,
+          entityType: "task_assignment",
+          entityId: "assignment_1",
+          action: "task_assignment.updated",
         },
         {
           actorType: "agent",
@@ -700,6 +806,29 @@ describe("@orqis/db migration SQL", () => {
 
       expect(() =>
         db.run(
+          [
+            "INSERT INTO task_assignments",
+            "  (id, project_id, workspace_id, task_id, role_key, role_display_name, role_responsibility, assigned_by_actor_type)",
+            "VALUES",
+            "  (?, ?, ?, ?, ?, ?, ?, ?)",
+          ].join("\n"),
+          [
+            "ta_bad",
+            "p2",
+            "w1",
+            "t1",
+            "backend_agent",
+            "Backend Agent",
+            "Owns runtime changes",
+            "agent",
+          ],
+        ),
+      ).toThrow(
+        /task_assignments\.task_id must reference a task in the same project\/workspace/,
+      );
+
+      expect(() =>
+        db.run(
           "INSERT INTO audit_events (id, project_id, workspace_id, actor_type, entity_type, entity_id, action) VALUES (?, ?, ?, ?, ?, ?, ?)",
           ["e_bad", "p2", "w1", "user", "task", "t1", "created"],
         ),
@@ -799,6 +928,54 @@ describe("@orqis/db migration SQL", () => {
       ).toThrow(
         /approvals\.run_id must reference a run in the same project\/workspace/,
       );
+
+      expect(() =>
+        db.run(
+          [
+            "INSERT INTO task_assignments",
+            "  (id, project_id, workspace_id, task_id, run_id, role_key, role_display_name, role_responsibility, assigned_by_actor_type)",
+            "VALUES",
+            "  (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          ].join("\n"),
+          [
+            "ta_cross_task",
+            "p2",
+            "w2",
+            "t1",
+            "r2",
+            "backend_agent",
+            "Backend Agent",
+            "Owns runtime changes",
+            "agent",
+          ],
+        ),
+      ).toThrow(
+        /task_assignments\.task_id must reference a task in the same project\/workspace/,
+      );
+
+      expect(() =>
+        db.run(
+          [
+            "INSERT INTO task_assignments",
+            "  (id, project_id, workspace_id, task_id, run_id, role_key, role_display_name, role_responsibility, assigned_by_actor_type)",
+            "VALUES",
+            "  (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          ].join("\n"),
+          [
+            "ta_cross_run",
+            "p2",
+            "w2",
+            "t2",
+            "r1",
+            "backend_agent",
+            "Backend Agent",
+            "Owns runtime changes",
+            "agent",
+          ],
+        ),
+      ).toThrow(
+        /task_assignments\.run_id must reference a run in the same project\/workspace/,
+      );
     });
   });
 
@@ -876,6 +1053,63 @@ describe("@orqis/db migration SQL", () => {
         "INSERT INTO approvals (id, project_id, workspace_id, task_id, run_id, status, requested_by_actor_type) VALUES (?, ?, ?, ?, ?, ?, ?)",
         ["a_update_owner", "p1", "w1", "t1", "r1", "pending", "user"],
       );
+      db.run(
+        [
+          "INSERT INTO task_assignments",
+          "  (id, project_id, workspace_id, task_id, run_id, role_key, role_display_name, role_responsibility, assigned_by_actor_type)",
+          "VALUES",
+          "  (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ].join("\n"),
+        [
+          "ta_update_task",
+          "p1",
+          "w1",
+          "t1",
+          "r1",
+          "backend_agent",
+          "Backend Agent",
+          "Owns runtime changes",
+          "agent",
+        ],
+      );
+      db.run(
+        [
+          "INSERT INTO task_assignments",
+          "  (id, project_id, workspace_id, task_id, run_id, role_key, role_display_name, role_responsibility, assigned_by_actor_type)",
+          "VALUES",
+          "  (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ].join("\n"),
+        [
+          "ta_update_run",
+          "p1",
+          "w1",
+          "t_update_run",
+          "r1",
+          "backend_agent",
+          "Backend Agent",
+          "Owns runtime changes",
+          "agent",
+        ],
+      );
+      db.run(
+        [
+          "INSERT INTO task_assignments",
+          "  (id, project_id, workspace_id, task_id, run_id, role_key, role_display_name, role_responsibility, assigned_by_actor_type)",
+          "VALUES",
+          "  (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ].join("\n"),
+        [
+          "ta_update_owner",
+          "p1",
+          "w1",
+          "t_update_owner",
+          "r1",
+          "backend_agent",
+          "Backend Agent",
+          "Owns runtime changes",
+          "agent",
+        ],
+      );
 
       expect(() =>
         db.run("UPDATE messages SET run_id = ? WHERE id = ?", ["r2", "m_update_run"]),
@@ -939,6 +1173,33 @@ describe("@orqis/db migration SQL", () => {
         ),
       ).toThrow(
         /approvals\.task_id must reference a task in the same project\/workspace/,
+      );
+
+      expect(() =>
+        db.run("UPDATE task_assignments SET task_id = ? WHERE id = ?", [
+          "t2",
+          "ta_update_task",
+        ]),
+      ).toThrow(
+        /task_assignments\.task_id must reference a task in the same project\/workspace/,
+      );
+
+      expect(() =>
+        db.run("UPDATE task_assignments SET run_id = ? WHERE id = ?", [
+          "r2",
+          "ta_update_run",
+        ]),
+      ).toThrow(
+        /task_assignments\.run_id must reference a run in the same project\/workspace/,
+      );
+
+      expect(() =>
+        db.run(
+          "UPDATE task_assignments SET project_id = ?, workspace_id = ? WHERE id = ?",
+          ["p2", "w2", "ta_update_owner"],
+        ),
+      ).toThrow(
+        /task_assignments\.task_id must reference a task in the same project\/workspace/,
       );
     });
   });

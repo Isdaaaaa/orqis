@@ -147,6 +147,18 @@ function normalizeOwnerType(ownerType: string): TaskClaimOwnerType {
   return normalized as TaskClaimOwnerType;
 }
 
+function assertOwnerIdentityMatchesOwnerType(input: {
+  readonly runId: string;
+  readonly ownerType: TaskClaimOwnerType;
+  readonly ownerId: string;
+}): void {
+  if (input.ownerType === "run" && input.ownerId !== input.runId) {
+    throw new TaskClaimValidationError(
+      "ownerId must equal runId when ownerType is run.",
+    );
+  }
+}
+
 function toSnapshot(task: TaskClaimRecord): TaskClaimSnapshot {
   return {
     state: task.state,
@@ -314,6 +326,8 @@ class DefaultTaskClaimService implements TaskClaimService {
           : normalizeRequiredString(input.claimedAt, "claimedAt"),
     } satisfies TaskExecutionClaimInput;
 
+    assertOwnerIdentityMatchesOwnerType(normalizedInput);
+
     return await this.mutateTaskClaim(
       normalizedInput.taskId,
       (task) => {
@@ -339,6 +353,8 @@ class DefaultTaskClaimService implements TaskClaimService {
       ownerType: normalizeOwnerType(input.ownerType),
       ownerId: normalizeRequiredString(input.ownerId, "ownerId"),
     } satisfies TaskExecutionReleaseInput;
+
+    assertOwnerIdentityMatchesOwnerType(normalizedInput);
 
     return await this.mutateTaskClaim(
       normalizedInput.taskId,

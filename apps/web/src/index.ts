@@ -11,14 +11,19 @@ import {
   serializeAgentConfigurationEditorClientHelpers,
 } from "./agent-configuration-editor.js";
 import {
+  type ClaimTaskExecutionInput,
   createWorkspaceTimelineStore,
   type AppendWorkspaceTimelineMessageInput,
+  type ReleaseTaskExecutionInput,
   type SaveAgentConfigurationInput,
   type WorkspaceMessageActorType,
   type WorkspaceTimelineStore,
   type WorkspaceTimelineStoreOptions,
   WorkspaceTimelineConflictError,
+  WorkspaceTimelineNotFoundError,
   WorkspaceTimelineValidationError,
+  WorkspaceTaskAssignmentConflictError,
+  WorkspaceTaskClaimConflictError,
 } from "./persistence.js";
 
 export const WEB_PACKAGE_NAME = "@orqis/web";
@@ -29,9 +34,15 @@ const SESSION_PATH = "/api/session";
 const PROJECTS_PATH = "/api/projects";
 const AGENT_CONFIGURATION_PATH = "/api/settings/agent-configuration";
 const WORKSPACE_MESSAGES_PATH_PATTERN = /^\/api\/workspaces\/([^/]+)\/messages$/;
+const WORKSPACE_TASKS_PATH_PATTERN = /^\/api\/workspaces\/([^/]+)\/tasks$/;
+const WORKSPACE_TASK_CHECKOUT_PATH_PATTERN =
+  /^\/api\/workspaces\/([^/]+)\/tasks\/([^/]+)\/checkout$/;
+const WORKSPACE_TASK_RELEASE_PATH_PATTERN =
+  /^\/api\/workspaces\/([^/]+)\/tasks\/([^/]+)\/release$/;
 const WORKSPACE_PLANNER_RUNS_PATH_PATTERN =
   /^\/api\/workspaces\/([^/]+)\/planner\/runs$/;
 const WORKSPACE_MESSAGE_ACTOR_TYPES = ["user", "agent", "system"] as const;
+const TASK_EXECUTION_OWNER_TYPES = ["run", "agent", "user"] as const;
 const SESSION_COOKIE_NAME = "orqis_session";
 const SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 const AUTH_REQUIRED_ERROR_MESSAGE = "Authentication required.";
@@ -81,6 +92,19 @@ interface CreateProjectBody {
   readonly description?: string;
 }
 
+interface TaskExecutionClaimBody {
+  readonly runId: string;
+  readonly ownerType: ClaimTaskExecutionInput["ownerType"];
+  readonly ownerId?: string;
+  readonly claimedAt?: string;
+}
+
+interface TaskExecutionReleaseBody {
+  readonly runId: string;
+  readonly ownerType: ReleaseTaskExecutionInput["ownerType"];
+  readonly ownerId?: string;
+}
+
 interface CreateSessionBody {
   readonly actorId: string;
 }
@@ -90,6 +114,11 @@ interface RuntimeSession {
   readonly actorId: string;
   readonly createdAt: string;
   readonly expiresAt: string;
+}
+
+interface WorkspaceTaskRouteParams {
+  readonly workspaceId: string;
+  readonly taskId: string;
 }
 
 interface RuntimeSessionStore {
@@ -2530,6 +2559,28 @@ function isWorkspaceMessageActorType(
   ).includes(value);
 }
 
+function isTaskExecutionOwnerType(
+  value: string,
+): value is TaskExecutionClaimBody["ownerType"] {
+  return (TASK_EXECUTION_OWNER_TYPES as readonly string[]).includes(value);
+}
+
+function validateTaskExecutionOwnerIdentity(input: {
+  readonly runId: string;
+  readonly ownerType: TaskExecutionClaimBody["ownerType"];
+  readonly ownerId?: string;
+}): string | undefined {
+  if (
+    input.ownerType === "run" &&
+    input.ownerId !== undefined &&
+    input.ownerId !== input.runId
+  ) {
+    return "ownerId must equal runId when ownerType is run.";
+  }
+
+  return undefined;
+}
+
 function parsePostWorkspaceMessageBody(
   body: unknown,
 ): { ok: true; value: PostWorkspaceMessageBody } | { ok: false; error: string } {
@@ -2606,6 +2657,128 @@ function parseCreateProjectManagerPlanBody(
     value: {
       projectId,
       goal,
+    },
+  };
+}
+
+function parseTaskExecutionClaimBody(
+  body: unknown,
+):
+  | { ok: true; value: TaskExecutionClaimBody }
+  | { ok: false; error: string } {
+  if (!isRecord(body)) {
+    return {
+      ok: false,
+      error: "Task checkout payload must be a JSON object.",
+    };
+  }
+
+  const runId = normalizeOptionalString(body.runId);
+  const ownerType = normalizeOptionalString(body.ownerType);
+  const ownerId = normalizeOptionalString(body.ownerId);
+  const claimedAt = normalizeOptionalString(body.claimedAt);
+
+  if (runId === undefined) {
+    return {
+      ok: false,
+      error: "runId must be a non-empty string.",
+    };
+  }
+
+  if (ownerType === undefined || !isTaskExecutionOwnerType(ownerType)) {
+    return {
+      ok: false,
+      error: `ownerType must be one of: ${TASK_EXECUTION_OWNER_TYPES.join(", ")}.`,
+    };
+  }
+
+  if (ownerType === "agent" && ownerId === undefined) {
+    return {
+      ok: false,
+      error: "ownerId must be a non-empty string when ownerType is agent.",
+    };
+  }
+
+  const ownerIdentityError = validateTaskExecutionOwnerIdentity({
+    runId,
+    ownerType,
+    ownerId,
+  });
+
+  if (ownerIdentityError !== undefined) {
+    return {
+      ok: false,
+      error: ownerIdentityError,
+    };
+  }
+
+  return {
+    ok: true,
+    value: {
+      runId,
+      ownerType,
+      ownerId,
+      claimedAt,
+    },
+  };
+}
+
+function parseTaskExecutionReleaseBody(
+  body: unknown,
+):
+  | { ok: true; value: TaskExecutionReleaseBody }
+  | { ok: false; error: string } {
+  if (!isRecord(body)) {
+    return {
+      ok: false,
+      error: "Task release payload must be a JSON object.",
+    };
+  }
+
+  const runId = normalizeOptionalString(body.runId);
+  const ownerType = normalizeOptionalString(body.ownerType);
+  const ownerId = normalizeOptionalString(body.ownerId);
+
+  if (runId === undefined) {
+    return {
+      ok: false,
+      error: "runId must be a non-empty string.",
+    };
+  }
+
+  if (ownerType === undefined || !isTaskExecutionOwnerType(ownerType)) {
+    return {
+      ok: false,
+      error: `ownerType must be one of: ${TASK_EXECUTION_OWNER_TYPES.join(", ")}.`,
+    };
+  }
+
+  if (ownerType === "agent" && ownerId === undefined) {
+    return {
+      ok: false,
+      error: "ownerId must be a non-empty string when ownerType is agent.",
+    };
+  }
+
+  const ownerIdentityError = validateTaskExecutionOwnerIdentity({
+    runId,
+    ownerType,
+    ownerId,
+  });
+
+  if (ownerIdentityError !== undefined) {
+    return {
+      ok: false,
+      error: ownerIdentityError,
+    };
+  }
+
+  return {
+    ok: true,
+    value: {
+      runId,
+      ownerType,
+      ownerId,
     },
   };
 }
@@ -2868,6 +3041,61 @@ function resolveWorkspaceMessagesPath(pathname: string): string | undefined {
   try {
     const decodedWorkspaceId = decodeURIComponent(encodedWorkspaceId);
     return decodedWorkspaceId.trim().length > 0 ? decodedWorkspaceId : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveWorkspaceTasksPath(pathname: string): string | undefined {
+  const match = pathname.match(WORKSPACE_TASKS_PATH_PATTERN);
+
+  if (match === null) {
+    return undefined;
+  }
+
+  const encodedWorkspaceId = match[1];
+
+  if (encodedWorkspaceId === undefined) {
+    return undefined;
+  }
+
+  try {
+    const decodedWorkspaceId = decodeURIComponent(encodedWorkspaceId);
+    return decodedWorkspaceId.trim().length > 0 ? decodedWorkspaceId : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveWorkspaceTaskPath(
+  pathname: string,
+  pattern: RegExp,
+): WorkspaceTaskRouteParams | undefined {
+  const match = pathname.match(pattern);
+
+  if (match === null) {
+    return undefined;
+  }
+
+  const encodedWorkspaceId = match[1];
+  const encodedTaskId = match[2];
+
+  if (encodedWorkspaceId === undefined || encodedTaskId === undefined) {
+    return undefined;
+  }
+
+  try {
+    const workspaceId = decodeURIComponent(encodedWorkspaceId);
+    const taskId = decodeURIComponent(encodedTaskId);
+
+    if (workspaceId.trim().length === 0 || taskId.trim().length === 0) {
+      return undefined;
+    }
+
+    return {
+      workspaceId,
+      taskId,
+    };
   } catch {
     return undefined;
   }
@@ -3486,6 +3714,300 @@ async function handleAgentConfigurationRoute(
   });
 }
 
+async function handleWorkspaceTasksRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  context: RuntimeRequestContext,
+  workspaceId: string,
+): Promise<void> {
+  if (request.method === "GET") {
+    try {
+      const tasks = context.timelineStore.listWorkspaceTasks(workspaceId);
+
+      writeJson(response, 200, {
+        workspaceId,
+        tasks,
+      });
+      return;
+    } catch (error) {
+      if (error instanceof WorkspaceTimelineValidationError) {
+        writeJson(response, 400, {
+          error: error.message,
+        });
+        return;
+      }
+
+      throw error;
+    }
+  }
+
+  response.setHeader("allow", "GET");
+  writeJson(response, 405, {
+    error: "Method Not Allowed",
+    method: request.method ?? "UNKNOWN",
+  });
+}
+
+async function handleWorkspaceTaskCheckoutRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  context: RuntimeRequestContext,
+  route: WorkspaceTaskRouteParams,
+  session: RuntimeSession,
+): Promise<void> {
+  if (request.method !== "POST") {
+    response.setHeader("allow", "POST");
+    writeJson(response, 405, {
+      error: "Method Not Allowed",
+      method: request.method ?? "UNKNOWN",
+    });
+    return;
+  }
+
+  let payload;
+
+  try {
+    payload = await readJsonRequestBody(request);
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      writeJson(response, 413, {
+        error: error.message,
+      });
+      return;
+    }
+
+    if (error instanceof RequestBodyJsonParseError) {
+      writeJson(response, 400, {
+        error: error.message,
+      });
+      return;
+    }
+
+    throw error;
+  }
+
+  const parsedBody = parseTaskExecutionClaimBody(payload);
+
+  if (!parsedBody.ok) {
+    writeJson(response, 400, {
+      error: parsedBody.error,
+    });
+    return;
+  }
+
+  const ownerId =
+    parsedBody.value.ownerId ??
+    (parsedBody.value.ownerType === "user"
+      ? session.actorId
+      : parsedBody.value.ownerType === "run"
+        ? parsedBody.value.runId
+        : undefined);
+
+  if (ownerId === undefined) {
+    writeJson(response, 400, {
+      error: "ownerId must be a non-empty string.",
+    });
+    return;
+  }
+
+  if (
+    parsedBody.value.ownerType === "user" &&
+    ownerId !== session.actorId
+  ) {
+    writeJson(response, 400, {
+      error: "user task checkout must use the authenticated session actorId as ownerId.",
+    });
+    return;
+  }
+
+  try {
+    const task = await context.timelineStore.claimTaskExecution({
+      workspaceId: route.workspaceId,
+      taskId: route.taskId,
+      runId: parsedBody.value.runId,
+      ownerType: parsedBody.value.ownerType,
+      ownerId,
+      claimedAt: parsedBody.value.claimedAt,
+    });
+
+    writeJson(response, 200, {
+      task,
+    });
+    return;
+  } catch (error) {
+    if (error instanceof WorkspaceTimelineValidationError) {
+      writeJson(response, 400, {
+        error: error.message,
+      });
+      return;
+    }
+
+    if (error instanceof WorkspaceTimelineNotFoundError) {
+      writeJson(response, 404, {
+        error: error.message,
+      });
+      return;
+    }
+
+    if (error instanceof WorkspaceTaskAssignmentConflictError) {
+      writeJson(response, 409, {
+        error: error.message,
+        code: error.code,
+        taskId: error.taskId,
+        assignedRoleKey: error.assignedRoleKey,
+        attemptedRoleKey: error.attemptedRoleKey,
+      });
+      return;
+    }
+
+    if (error instanceof WorkspaceTaskClaimConflictError) {
+      writeJson(response, 409, {
+        error: error.message,
+        code: error.code,
+        taskId: error.taskId,
+        currentExecutionRunId: error.currentExecutionRunId,
+        currentCheckoutRunId: error.currentCheckoutRunId,
+        currentOwnerType: error.currentOwnerType,
+        currentOwnerId: error.currentOwnerId,
+      });
+      return;
+    }
+
+    if (error instanceof WorkspaceTimelineConflictError) {
+      writeJson(response, 409, {
+        error: error.message,
+      });
+      return;
+    }
+
+    throw error;
+  }
+}
+
+async function handleWorkspaceTaskReleaseRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  context: RuntimeRequestContext,
+  route: WorkspaceTaskRouteParams,
+  session: RuntimeSession,
+): Promise<void> {
+  if (request.method !== "POST") {
+    response.setHeader("allow", "POST");
+    writeJson(response, 405, {
+      error: "Method Not Allowed",
+      method: request.method ?? "UNKNOWN",
+    });
+    return;
+  }
+
+  let payload;
+
+  try {
+    payload = await readJsonRequestBody(request);
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      writeJson(response, 413, {
+        error: error.message,
+      });
+      return;
+    }
+
+    if (error instanceof RequestBodyJsonParseError) {
+      writeJson(response, 400, {
+        error: error.message,
+      });
+      return;
+    }
+
+    throw error;
+  }
+
+  const parsedBody = parseTaskExecutionReleaseBody(payload);
+
+  if (!parsedBody.ok) {
+    writeJson(response, 400, {
+      error: parsedBody.error,
+    });
+    return;
+  }
+
+  const ownerId =
+    parsedBody.value.ownerId ??
+    (parsedBody.value.ownerType === "user"
+      ? session.actorId
+      : parsedBody.value.ownerType === "run"
+        ? parsedBody.value.runId
+        : undefined);
+
+  if (ownerId === undefined) {
+    writeJson(response, 400, {
+      error: "ownerId must be a non-empty string.",
+    });
+    return;
+  }
+
+  if (
+    parsedBody.value.ownerType === "user" &&
+    ownerId !== session.actorId
+  ) {
+    writeJson(response, 400, {
+      error: "user task release must use the authenticated session actorId as ownerId.",
+    });
+    return;
+  }
+
+  try {
+    const task = await context.timelineStore.releaseTaskExecution({
+      workspaceId: route.workspaceId,
+      taskId: route.taskId,
+      runId: parsedBody.value.runId,
+      ownerType: parsedBody.value.ownerType,
+      ownerId,
+    });
+
+    writeJson(response, 200, {
+      task,
+    });
+    return;
+  } catch (error) {
+    if (error instanceof WorkspaceTimelineValidationError) {
+      writeJson(response, 400, {
+        error: error.message,
+      });
+      return;
+    }
+
+    if (error instanceof WorkspaceTimelineNotFoundError) {
+      writeJson(response, 404, {
+        error: error.message,
+      });
+      return;
+    }
+
+    if (error instanceof WorkspaceTaskClaimConflictError) {
+      writeJson(response, 409, {
+        error: error.message,
+        code: error.code,
+        taskId: error.taskId,
+        currentExecutionRunId: error.currentExecutionRunId,
+        currentCheckoutRunId: error.currentCheckoutRunId,
+        currentOwnerType: error.currentOwnerType,
+        currentOwnerId: error.currentOwnerId,
+      });
+      return;
+    }
+
+    if (error instanceof WorkspaceTimelineConflictError) {
+      writeJson(response, 409, {
+        error: error.message,
+      });
+      return;
+    }
+
+    throw error;
+  }
+}
+
 async function handleWorkspaceMessagesRoute(
   request: IncomingMessage,
   response: ServerResponse,
@@ -3717,6 +4239,45 @@ async function handleRequest(
 
   if (pathname === AGENT_CONFIGURATION_PATH) {
     await handleAgentConfigurationRoute(request, response, context);
+    return;
+  }
+
+  const taskCheckoutRoute = resolveWorkspaceTaskPath(
+    pathname,
+    WORKSPACE_TASK_CHECKOUT_PATH_PATTERN,
+  );
+
+  if (taskCheckoutRoute !== undefined && session !== undefined) {
+    await handleWorkspaceTaskCheckoutRoute(
+      request,
+      response,
+      context,
+      taskCheckoutRoute,
+      session,
+    );
+    return;
+  }
+
+  const taskReleaseRoute = resolveWorkspaceTaskPath(
+    pathname,
+    WORKSPACE_TASK_RELEASE_PATH_PATTERN,
+  );
+
+  if (taskReleaseRoute !== undefined && session !== undefined) {
+    await handleWorkspaceTaskReleaseRoute(
+      request,
+      response,
+      context,
+      taskReleaseRoute,
+      session,
+    );
+    return;
+  }
+
+  const tasksWorkspaceId = resolveWorkspaceTasksPath(pathname);
+
+  if (tasksWorkspaceId !== undefined) {
+    await handleWorkspaceTasksRoute(request, response, context, tasksWorkspaceId);
     return;
   }
 
