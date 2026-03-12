@@ -14,6 +14,54 @@ import {
 } from "../src/persistence.ts";
 import { WORKSPACE_CI_INTEGRATION_TIMEOUT_MS } from "./integration-timeouts.ts";
 
+interface ApprovalAuditEventRow {
+  readonly action: string;
+  readonly actorType: string;
+  readonly actorId: string | null;
+}
+
+interface RunStatusRow {
+  readonly status: string;
+}
+
+function readApprovalAuditEvents(
+  database: BetterSqlite3.Database,
+  approvalId: string,
+): ApprovalAuditEventRow[] {
+  return database
+    .prepare(
+      [
+        "SELECT",
+        "  action,",
+        "  actor_type AS actorType,",
+        "  actor_id AS actorId",
+        "FROM audit_events",
+        "WHERE approval_id = ?",
+        "ORDER BY rowid ASC",
+      ].join("\n"),
+    )
+    .all(approvalId) as ApprovalAuditEventRow[];
+}
+
+function readRunStatus(
+  database: BetterSqlite3.Database,
+  runId: string,
+): string | null {
+  const row = database
+    .prepare(
+      [
+        "SELECT",
+        "  status",
+        "FROM runs",
+        "WHERE id = ?",
+        "LIMIT 1",
+      ].join("\n"),
+    )
+    .get(runId) as RunStatusRow | undefined;
+
+  return row?.status ?? null;
+}
+
 describe("@orqis/web workspace timeline persistence", () => {
   it(
     "persists messages across store restarts and keeps chronological workspace ordering",
@@ -712,6 +760,201 @@ describe("@orqis/web workspace timeline persistence", () => {
         });
       } finally {
         store.close();
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
+  );
+
+  it(
+    "persists task output approval, revision request, resubmission, and final approval with audit history",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "orqis-web-task-approval-"));
+      const databaseFilePath = join(tempDir, "task-approval.db");
+      const store = createWorkspaceTimelineStore({
+        databaseFilePath,
+      });
+
+      let approvalId = "";
+      let runId = "";
+
+      try {
+        const project = store.createProject({
+          name: "Task Approval Project",
+        });
+        const plan = store.createProjectManagerPlan({
+          workspaceId: project.workspaceId,
+          projectId: project.projectId,
+          goal: "Implement the user approval loop",
+          requestedByActorId: "owner",
+        });
+        const backendTask = plan.tasks.find(
+          (task) => task.ownerRole === "backend_agent",
+        );
+
+        if (backendTask === undefined) {
+          throw new Error("expected backend task for approval assertions");
+        }
+
+        runId = plan.runId;
+
+        await store.claimTaskExecution({
+          workspaceId: project.workspaceId,
+          taskId: backendTask.id,
+          runId: plan.runId,
+          ownerType: "agent",
+          ownerId: "backend_agent",
+        });
+
+        const submitted = await store.submitTaskOutput({
+          workspaceId: project.workspaceId,
+          taskId: backendTask.id,
+          runId: plan.runId,
+          ownerType: "agent",
+          ownerId: "backend_agent",
+          output: "Implemented the first approval flow.",
+        });
+
+        approvalId = submitted.approval.id;
+
+        expect(submitted.task).toMatchObject({
+          id: backendTask.id,
+          state: "waiting_approval",
+          executionRunId: null,
+          checkoutRunId: plan.runId,
+          lockOwnerId: "backend_agent",
+        });
+        expect(submitted.approval).toMatchObject({
+          taskId: backendTask.id,
+          runId: plan.runId,
+          status: "pending",
+          requestedByActorType: "agent",
+          requestedByActorId: "backend_agent",
+        });
+        expect(submitted.outputMessage.content).toContain(
+          `Task output submitted for "${backendTask.title}"`,
+        );
+        expect(submitted.projectManagerMessage.actorId).toBe("project_manager");
+
+        const revisionRequested = await store.decideTaskApproval({
+          workspaceId: project.workspaceId,
+          taskId: backendTask.id,
+          decision: "revision_requested",
+          decisionSummary: "Address the edge case before merge.",
+          decidedByActorId: "owner",
+        });
+
+        expect(revisionRequested.task).toMatchObject({
+          id: backendTask.id,
+          state: "in_progress",
+          executionRunId: null,
+          checkoutRunId: plan.runId,
+        });
+        expect(revisionRequested.approval).toMatchObject({
+          id: approvalId,
+          status: "revision_requested",
+          decisionByActorType: "user",
+          decisionByActorId: "owner",
+          decisionSummary: "Address the edge case before merge.",
+        });
+
+        await store.claimTaskExecution({
+          workspaceId: project.workspaceId,
+          taskId: backendTask.id,
+          runId: plan.runId,
+          ownerType: "agent",
+          ownerId: "backend_agent",
+        });
+
+        const resubmitted = await store.submitTaskOutput({
+          workspaceId: project.workspaceId,
+          taskId: backendTask.id,
+          runId: plan.runId,
+          ownerType: "agent",
+          ownerId: "backend_agent",
+          output: "Addressed the edge case and updated the approval flow.",
+        });
+
+        expect(resubmitted.approval).toMatchObject({
+          id: approvalId,
+          status: "resubmitted",
+          decisionByActorType: null,
+          decisionByActorId: null,
+          decisionSummary: null,
+        });
+        expect(resubmitted.task.state).toBe("waiting_approval");
+
+        const approved = await store.decideTaskApproval({
+          workspaceId: project.workspaceId,
+          taskId: backendTask.id,
+          decision: "approved",
+          decidedByActorId: "owner",
+        });
+
+        expect(approved.task).toMatchObject({
+          id: backendTask.id,
+          state: "done",
+        });
+        expect(approved.task.completedAt).toBeTypeOf("string");
+        expect(approved.approval).toMatchObject({
+          id: approvalId,
+          status: "approved",
+          decisionByActorType: "user",
+          decisionByActorId: "owner",
+        });
+        expect(approved.projectManagerMessage.content).toContain(
+          `Project Manager received approval for "${backendTask.title}"`,
+        );
+
+        const messages = store.listWorkspaceMessages(project.workspaceId);
+        expect(messages.map((message) => message.content)).toEqual(
+          expect.arrayContaining([
+            "Implement the user approval loop",
+            expect.stringContaining(
+              `Task output submitted for "${backendTask.title}"`,
+            ),
+            expect.stringContaining(
+              `User "owner" requested revisions for "${backendTask.title}"`,
+            ),
+            expect.stringContaining(
+              `User "owner" approved "${backendTask.title}"`,
+            ),
+          ]),
+        );
+      } finally {
+        store.close();
+      }
+
+      const auditDatabase = new BetterSqlite3(databaseFilePath, {
+        readonly: true,
+      });
+
+      try {
+        expect(readApprovalAuditEvents(auditDatabase, approvalId)).toEqual([
+          {
+            action: "approval.created",
+            actorType: "agent",
+            actorId: "backend_agent",
+          },
+          {
+            action: "approval.updated",
+            actorType: "user",
+            actorId: "owner",
+          },
+          {
+            action: "approval.updated",
+            actorType: "agent",
+            actorId: "backend_agent",
+          },
+          {
+            action: "approval.updated",
+            actorType: "user",
+            actorId: "owner",
+          },
+        ]);
+        expect(readRunStatus(auditDatabase, runId)).toBe("running");
+      } finally {
+        auditDatabase.close();
         await rm(tempDir, { recursive: true, force: true });
       }
     },

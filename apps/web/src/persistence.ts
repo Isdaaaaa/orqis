@@ -6,6 +6,11 @@ import { fileURLToPath } from "node:url";
 
 import BetterSqlite3 from "better-sqlite3";
 import {
+  createApprovalGuardedTransitionService,
+  ApprovalGuardedTransitionBlockedError,
+  ApprovalGuardedTransitionConflictError,
+  ApprovalGuardedTransitionNotFoundError,
+  ApprovalGuardedTransitionValidationError,
   createProjectManagerPlannerService,
   createTaskClaimService,
   PROJECT_MANAGER_PLANNER_ROLE_KEY,
@@ -164,6 +169,44 @@ export interface WorkspaceTaskAssignmentRecord {
   readonly updatedAt: string;
 }
 
+export const WORKSPACE_TASK_APPROVAL_STATUSES = [
+  "pending",
+  "approved",
+  "rejected",
+  "revision_requested",
+  "resubmitted",
+] as const;
+export type WorkspaceTaskApprovalStatus =
+  (typeof WORKSPACE_TASK_APPROVAL_STATUSES)[number];
+
+export const TASK_APPROVAL_DECISION_STATUSES = [
+  "approved",
+  "rejected",
+  "revision_requested",
+] as const;
+export type TaskApprovalDecisionStatus =
+  (typeof TASK_APPROVAL_DECISION_STATUSES)[number];
+
+export interface WorkspaceTaskApprovalRecord {
+  readonly id: string;
+  readonly projectId: string;
+  readonly workspaceId: string;
+  readonly taskId: string;
+  readonly runId: string | null;
+  readonly status: WorkspaceTaskApprovalStatus;
+  readonly requestedByActorType: WorkspaceMessageActorType;
+  readonly requestedByActorId: string | null;
+  readonly decisionByActorType: WorkspaceMessageActorType | null;
+  readonly decisionByActorId: string | null;
+  readonly decisionSummary: string | null;
+  readonly requestedAt: string;
+  readonly decidedAt: string | null;
+  readonly revisionRequestedAt: string | null;
+  readonly resubmittedAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export interface WorkspaceTaskRecord {
   readonly id: string;
   readonly projectId: string;
@@ -218,6 +261,10 @@ export interface WorkspaceTimelineStore {
   listWorkspaceTasks(workspaceId: string): WorkspaceTaskRecord[];
   claimTaskExecution(input: ClaimTaskExecutionInput): Promise<WorkspaceTaskRecord>;
   releaseTaskExecution(input: ReleaseTaskExecutionInput): Promise<WorkspaceTaskRecord>;
+  submitTaskOutput(input: SubmitTaskOutputInput): Promise<SubmitTaskOutputResult>;
+  decideTaskApproval(
+    input: DecideTaskApprovalInput,
+  ): Promise<DecideTaskApprovalResult>;
   listWorkspaceMessages(workspaceId: string): WorkspaceTimelineMessage[];
   getAgentConfiguration(): AgentConfiguration;
   saveAgentConfiguration(input: SaveAgentConfigurationInput): AgentConfiguration;
@@ -321,6 +368,37 @@ export interface ReleaseTaskExecutionInput {
   readonly ownerId: string;
 }
 
+export interface SubmitTaskOutputInput {
+  readonly workspaceId: string;
+  readonly taskId: string;
+  readonly runId: string;
+  readonly ownerType: TaskClaimOwnerType;
+  readonly ownerId: string;
+  readonly output: string;
+}
+
+export interface SubmitTaskOutputResult {
+  readonly task: WorkspaceTaskRecord;
+  readonly approval: WorkspaceTaskApprovalRecord;
+  readonly outputMessage: WorkspaceTimelineMessage;
+  readonly projectManagerMessage: WorkspaceTimelineMessage;
+}
+
+export interface DecideTaskApprovalInput {
+  readonly workspaceId: string;
+  readonly taskId: string;
+  readonly decision: TaskApprovalDecisionStatus;
+  readonly decisionSummary?: string;
+  readonly decidedByActorId: string;
+}
+
+export interface DecideTaskApprovalResult {
+  readonly task: WorkspaceTaskRecord;
+  readonly approval: WorkspaceTaskApprovalRecord;
+  readonly decisionMessage: WorkspaceTimelineMessage;
+  readonly projectManagerMessage: WorkspaceTimelineMessage;
+}
+
 interface WorkspaceProjectRow {
   readonly projectId: string;
 }
@@ -406,6 +484,31 @@ interface WorkspaceTaskRow {
   readonly assignedAt: string | null;
   readonly assignmentCreatedAt: string | null;
   readonly assignmentUpdatedAt: string | null;
+}
+
+interface WorkspaceTaskApprovalRow {
+  readonly id: string;
+  readonly projectId: string;
+  readonly workspaceId: string;
+  readonly taskId: string;
+  readonly runId: string | null;
+  readonly status: WorkspaceTaskApprovalStatus;
+  readonly requestedByActorType: WorkspaceMessageActorType;
+  readonly requestedByActorId: string | null;
+  readonly decisionByActorType: WorkspaceMessageActorType | null;
+  readonly decisionByActorId: string | null;
+  readonly decisionSummary: string | null;
+  readonly requestedAt: string;
+  readonly decidedAt: string | null;
+  readonly revisionRequestedAt: string | null;
+  readonly resubmittedAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+interface WorkspaceRunStatusRow {
+  readonly id: string;
+  readonly status: "planned" | "running" | "waiting_approval" | "done" | "failed";
 }
 
 interface SchemaMigrationRow {
@@ -574,6 +677,12 @@ function isTaskClaimOwnerType(value: string): value is TaskClaimOwnerType {
   return (TASK_CLAIM_OWNER_TYPES as readonly string[]).includes(value);
 }
 
+function isTaskApprovalDecisionStatus(
+  value: string,
+): value is TaskApprovalDecisionStatus {
+  return (TASK_APPROVAL_DECISION_STATUSES as readonly string[]).includes(value);
+}
+
 function assertTaskExecutionOwnerIdentity(input: {
   readonly runId: string;
   readonly ownerType: TaskClaimOwnerType;
@@ -634,6 +743,99 @@ function mapWorkspaceTaskRow(row: WorkspaceTaskRow): WorkspaceTaskRecord {
     completedAt: row.completedAt,
     assignment,
   };
+}
+
+function mapWorkspaceTaskApprovalRow(
+  row: WorkspaceTaskApprovalRow,
+): WorkspaceTaskApprovalRecord {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    workspaceId: row.workspaceId,
+    taskId: row.taskId,
+    runId: row.runId,
+    status: row.status,
+    requestedByActorType: row.requestedByActorType,
+    requestedByActorId: row.requestedByActorId,
+    decisionByActorType: row.decisionByActorType,
+    decisionByActorId: row.decisionByActorId,
+    decisionSummary: row.decisionSummary,
+    requestedAt: row.requestedAt,
+    decidedAt: row.decidedAt,
+    revisionRequestedAt: row.revisionRequestedAt,
+    resubmittedAt: row.resubmittedAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function resolveWorkflowActor(input: {
+  readonly ownerType: TaskClaimOwnerType;
+  readonly ownerId: string;
+  readonly runId: string;
+}): { actorType: WorkspaceMessageActorType; actorId: string } {
+  if (input.ownerType === "agent") {
+    return {
+      actorType: "agent",
+      actorId: input.ownerId,
+    };
+  }
+
+  if (input.ownerType === "user") {
+    return {
+      actorType: "user",
+      actorId: input.ownerId,
+    };
+  }
+
+  return {
+    actorType: "system",
+    actorId: input.runId,
+  };
+}
+
+function createTaskOutputMessageContent(
+  task: WorkspaceTaskRecord,
+  output: string,
+): string {
+  return [`Task output submitted for "${task.title}".`, "", output].join("\n");
+}
+
+function createTaskApprovalWaitingMessageContent(task: WorkspaceTaskRecord): string {
+  return `Project Manager is waiting for approval on "${task.title}".`;
+}
+
+function createTaskApprovalDecisionMessageContent(input: {
+  readonly task: WorkspaceTaskRecord;
+  readonly decision: TaskApprovalDecisionStatus;
+  readonly decisionSummary: string | null;
+  readonly actorId: string;
+}): string {
+  const decisionLabel =
+    input.decision === "revision_requested"
+      ? "requested revisions for"
+      : input.decision === "rejected"
+        ? "rejected"
+        : "approved";
+
+  return input.decisionSummary === null
+    ? `User "${input.actorId}" ${decisionLabel} "${input.task.title}".`
+    : `User "${input.actorId}" ${decisionLabel} "${input.task.title}": ${input.decisionSummary}`;
+}
+
+function createProjectManagerDecisionMessageContent(input: {
+  readonly task: WorkspaceTaskRecord;
+  readonly decision: TaskApprovalDecisionStatus;
+}): string {
+  if (input.decision === "approved") {
+    return `Project Manager received approval for "${input.task.title}" and can continue the workflow.`;
+  }
+
+  if (input.decision === "revision_requested") {
+    return `Project Manager received a revision request for "${input.task.title}" and returned it to the assigned specialist.`;
+  }
+
+  return `Project Manager received a rejection for "${input.task.title}" and should replan or replace the task.`;
 }
 
 function mapSqliteError(error: unknown): WorkspaceTimelineError {
@@ -1334,6 +1536,343 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
     }
   }
 
+  async submitTaskOutput(
+    input: SubmitTaskOutputInput,
+  ): Promise<SubmitTaskOutputResult> {
+    const workspaceId = normalizeRequiredString(input.workspaceId, "workspaceId");
+    const taskId = normalizeRequiredString(input.taskId, "taskId");
+    const runId = normalizeRequiredString(input.runId, "runId");
+    const ownerType = normalizeRequiredString(input.ownerType, "ownerType");
+    const ownerId = normalizeRequiredString(input.ownerId, "ownerId");
+    const output = normalizeRequiredString(input.output, "output");
+
+    if (!isTaskClaimOwnerType(ownerType)) {
+      throw new WorkspaceTimelineValidationError(
+        `ownerType must be one of: ${TASK_CLAIM_OWNER_TYPES.join(", ")}.`,
+      );
+    }
+
+    assertTaskExecutionOwnerIdentity({
+      runId,
+      ownerType,
+      ownerId,
+    });
+
+    let transactionStarted = false;
+
+    try {
+      this.database.exec("BEGIN IMMEDIATE");
+      transactionStarted = true;
+
+      const task = this.requireWorkspaceTask(taskId, workspaceId);
+      this.assertAgentClaimMatchesAssignment(task, ownerType, ownerId);
+      this.assertTaskOutputSubmissionAllowed(task, {
+        runId,
+        ownerType,
+        ownerId,
+      });
+
+      const existingApproval = this.getTaskApprovalRecord(taskId);
+
+      if (
+        existingApproval !== undefined &&
+        existingApproval.status !== "revision_requested"
+      ) {
+        throw new WorkspaceTimelineConflictError(
+          `Task "${taskId}" cannot accept a new output submission while approval "${existingApproval.id}" is "${existingApproval.status}".`,
+        );
+      }
+
+      const createdAt = new Date().toISOString();
+      const workflowActor = resolveWorkflowActor({
+        ownerType,
+        ownerId,
+        runId,
+      });
+
+      const outputMessage = this.databaseHandle.auditContext.runWithContext(
+        {
+          actorType: workflowActor.actorType,
+          actorId: workflowActor.actorId,
+          correlationRunId: runId,
+        },
+        () => {
+          if (existingApproval === undefined) {
+            const approvalId = randomUUID();
+
+            this.database
+              .prepare(
+                [
+                  "INSERT INTO approvals",
+                  "  (id, project_id, workspace_id, task_id, run_id, status, requested_by_actor_type, requested_by_actor_id, requested_at, created_at, updated_at)",
+                  "VALUES",
+                  "  (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ].join("\n"),
+              )
+              .run(
+                approvalId,
+                task.projectId,
+                task.workspaceId,
+                task.id,
+                task.runId ?? runId,
+                "pending",
+                workflowActor.actorType,
+                workflowActor.actorId,
+                createdAt,
+                createdAt,
+                createdAt,
+              );
+          } else {
+            this.database
+              .prepare(
+                [
+                  "UPDATE approvals",
+                  "SET",
+                  "  status = ?,",
+                  "  decision_by_actor_type = NULL,",
+                  "  decision_by_actor_id = NULL,",
+                  "  decision_summary = NULL,",
+                  "  decided_at = NULL,",
+                  "  resubmitted_at = ?,",
+                  "  updated_at = ?",
+                  "WHERE id = ?",
+                ].join("\n"),
+              )
+              .run("resubmitted", createdAt, createdAt, existingApproval.id);
+          }
+
+          this.updateTaskForApprovalSubmission(task.id, runId, createdAt);
+          this.markRunWaitingApproval(task.runId ?? runId, createdAt);
+
+          return this.insertTimelineMessage({
+            projectId: task.projectId,
+            workspaceId: task.workspaceId,
+            runId: task.runId ?? runId,
+            actorType: workflowActor.actorType,
+            actorId: workflowActor.actorId,
+            content: createTaskOutputMessageContent(task, output),
+            createdAt,
+          });
+        },
+      );
+      const projectManagerMessage = this.insertTimelineMessage({
+        projectId: task.projectId,
+        workspaceId: task.workspaceId,
+        runId: task.runId ?? runId,
+        actorType: "agent",
+        actorId: PROJECT_MANAGER_PLANNER_ROLE_KEY,
+        content: createTaskApprovalWaitingMessageContent(task),
+        createdAt,
+      });
+      const refreshedTask = this.requireWorkspaceTask(taskId, workspaceId);
+      const approval = this.requireTaskApprovalRecord(taskId);
+
+      this.database.exec("COMMIT");
+      transactionStarted = false;
+
+      return {
+        task: refreshedTask,
+        approval,
+        outputMessage,
+        projectManagerMessage,
+      };
+    } catch (error) {
+      if (transactionStarted) {
+        this.database.exec("ROLLBACK");
+      }
+
+      throw mapSqliteError(error);
+    }
+  }
+
+  async decideTaskApproval(
+    input: DecideTaskApprovalInput,
+  ): Promise<DecideTaskApprovalResult> {
+    const workspaceId = normalizeRequiredString(input.workspaceId, "workspaceId");
+    const taskId = normalizeRequiredString(input.taskId, "taskId");
+    const decidedByActorId = normalizeRequiredString(
+      input.decidedByActorId,
+      "decidedByActorId",
+    );
+    const decisionValue = normalizeRequiredString(input.decision, "decision");
+    const decisionSummary = normalizeOptionalString(input.decisionSummary) ?? null;
+
+    if (!isTaskApprovalDecisionStatus(decisionValue)) {
+      throw new WorkspaceTimelineValidationError(
+        `decision must be one of: ${TASK_APPROVAL_DECISION_STATUSES.join(", ")}.`,
+      );
+    }
+
+    const decision = decisionValue;
+
+    if (
+      (decision === "rejected" || decision === "revision_requested") &&
+      decisionSummary === null
+    ) {
+      throw new WorkspaceTimelineValidationError(
+        `decisionSummary must be a non-empty string when decision is "${decision}".`,
+      );
+    }
+
+    let transactionStarted = false;
+
+    try {
+      this.database.exec("BEGIN IMMEDIATE");
+      transactionStarted = true;
+
+      const task = this.requireWorkspaceTask(taskId, workspaceId);
+
+      if (task.state !== "waiting_approval") {
+        throw new WorkspaceTimelineConflictError(
+          `Task "${taskId}" cannot be decided from state "${task.state}".`,
+        );
+      }
+
+      const approval = this.requireTaskApprovalRecord(taskId);
+
+      if (
+        approval.status !== "pending" &&
+        approval.status !== "resubmitted"
+      ) {
+        throw new WorkspaceTimelineConflictError(
+          `Task "${taskId}" does not have an unresolved approval to decide.`,
+        );
+      }
+
+      const createdAt = new Date().toISOString();
+      const correlationRunId =
+        approval.runId ?? task.runId ?? task.checkoutRunId ?? null;
+      const auditContext = {
+        actorType: "user" as const,
+        actorId: decidedByActorId,
+        correlationRunId,
+      };
+
+      this.databaseHandle.auditContext.runWithContext(auditContext, () => {
+        this.database
+          .prepare(
+            [
+              "UPDATE approvals",
+              "SET",
+              "  status = ?,",
+              "  decision_by_actor_type = ?,",
+              "  decision_by_actor_id = ?,",
+              "  decision_summary = ?,",
+              "  decided_at = ?,",
+              "  revision_requested_at = ?,",
+              "  updated_at = ?",
+              "WHERE id = ?",
+            ].join("\n"),
+          )
+          .run(
+            decision,
+            "user",
+            decidedByActorId,
+            decisionSummary,
+            createdAt,
+            decision === "revision_requested"
+              ? createdAt
+              : approval.revisionRequestedAt,
+            createdAt,
+            approval.id,
+          );
+      });
+
+      const transitionService =
+        this.createApprovalGuardedTransitionServiceForAuditContext(auditContext);
+      const targetTaskState =
+        decision === "approved"
+          ? "done"
+          : decision === "revision_requested"
+            ? "in_progress"
+            : "blocked";
+
+      await transitionService.transitionTask({
+        taskId,
+        from: "waiting_approval",
+        to: targetTaskState,
+      });
+
+      const runStatus = correlationRunId === null
+        ? undefined
+        : this.getRunStatusRecord(correlationRunId);
+
+      if (runStatus?.status === "waiting_approval") {
+        try {
+          await transitionService.transitionRun({
+            runId: runStatus.id,
+            from: "waiting_approval",
+            to: "running",
+          });
+        } catch (error) {
+          if (!(error instanceof ApprovalGuardedTransitionBlockedError)) {
+            throw error;
+          }
+        }
+      }
+
+      const decisionMessage = this.insertTimelineMessage({
+        projectId: task.projectId,
+        workspaceId: task.workspaceId,
+        runId: correlationRunId,
+        actorType: "user",
+        actorId: decidedByActorId,
+        content: createTaskApprovalDecisionMessageContent({
+          task,
+          decision,
+          decisionSummary,
+          actorId: decidedByActorId,
+        }),
+        createdAt,
+      });
+      const projectManagerMessage = this.insertTimelineMessage({
+        projectId: task.projectId,
+        workspaceId: task.workspaceId,
+        runId: correlationRunId,
+        actorType: "agent",
+        actorId: PROJECT_MANAGER_PLANNER_ROLE_KEY,
+        content: createProjectManagerDecisionMessageContent({
+          task,
+          decision,
+        }),
+        createdAt,
+      });
+      const refreshedTask = this.requireWorkspaceTask(taskId, workspaceId);
+      const refreshedApproval = this.requireTaskApprovalRecord(taskId);
+
+      this.database.exec("COMMIT");
+      transactionStarted = false;
+
+      return {
+        task: refreshedTask,
+        approval: refreshedApproval,
+        decisionMessage,
+        projectManagerMessage,
+      };
+    } catch (error) {
+      if (transactionStarted) {
+        this.database.exec("ROLLBACK");
+      }
+
+      if (
+        error instanceof ApprovalGuardedTransitionValidationError ||
+        error instanceof ApprovalGuardedTransitionBlockedError
+      ) {
+        throw new WorkspaceTimelineValidationError(error.message);
+      }
+
+      if (error instanceof ApprovalGuardedTransitionNotFoundError) {
+        throw new WorkspaceTimelineNotFoundError(error.message);
+      }
+
+      if (error instanceof ApprovalGuardedTransitionConflictError) {
+        throw new WorkspaceTimelineConflictError(error.message);
+      }
+
+      throw mapSqliteError(error);
+    }
+  }
+
   listWorkspaceMessages(workspaceId: string): WorkspaceTimelineMessage[] {
     const normalizedWorkspaceId = normalizeRequiredString(
       workspaceId,
@@ -1807,6 +2346,342 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
         ].join("\n"),
       )
       .get(taskId) as TaskClaimRecord | undefined;
+  }
+
+  private getTaskApprovalRecord(
+    taskId: string,
+  ): WorkspaceTaskApprovalRecord | undefined {
+    const rows = this.database
+      .prepare(
+        [
+          "SELECT",
+          "  id,",
+          "  project_id AS projectId,",
+          "  workspace_id AS workspaceId,",
+          "  task_id AS taskId,",
+          "  run_id AS runId,",
+          "  status,",
+          "  requested_by_actor_type AS requestedByActorType,",
+          "  requested_by_actor_id AS requestedByActorId,",
+          "  decision_by_actor_type AS decisionByActorType,",
+          "  decision_by_actor_id AS decisionByActorId,",
+          "  decision_summary AS decisionSummary,",
+          "  requested_at AS requestedAt,",
+          "  decided_at AS decidedAt,",
+          "  revision_requested_at AS revisionRequestedAt,",
+          "  resubmitted_at AS resubmittedAt,",
+          "  created_at AS createdAt,",
+          "  updated_at AS updatedAt",
+          "FROM approvals",
+          "WHERE task_id = ?",
+          "ORDER BY created_at DESC, rowid DESC",
+          "LIMIT 2",
+        ].join("\n"),
+      )
+      .all(taskId) as WorkspaceTaskApprovalRow[];
+
+    if (rows.length > 1) {
+      throw new WorkspaceTimelineConflictError(
+        `Task "${taskId}" has multiple approval records; only one active approval record is supported in this slice.`,
+      );
+    }
+
+    const row = rows[0];
+    return row === undefined ? undefined : mapWorkspaceTaskApprovalRow(row);
+  }
+
+  private requireTaskApprovalRecord(taskId: string): WorkspaceTaskApprovalRecord {
+    const approval = this.getTaskApprovalRecord(taskId);
+
+    if (approval === undefined) {
+      throw new WorkspaceTimelineNotFoundError(
+        `Task "${taskId}" does not have an approval record.`,
+      );
+    }
+
+    return approval;
+  }
+
+  private getRunStatusRecord(runId: string): WorkspaceRunStatusRow | undefined {
+    return this.database
+      .prepare(
+        [
+          "SELECT",
+          "  id,",
+          "  status",
+          "FROM runs",
+          "WHERE id = ?",
+          "LIMIT 1",
+        ].join("\n"),
+      )
+      .get(runId) as WorkspaceRunStatusRow | undefined;
+  }
+
+  private assertTaskOutputSubmissionAllowed(
+    task: WorkspaceTaskRecord,
+    input: {
+      readonly runId: string;
+      readonly ownerType: TaskClaimOwnerType;
+      readonly ownerId: string;
+    },
+  ): void {
+    if (task.state !== "in_progress") {
+      throw new WorkspaceTimelineConflictError(
+        `Task "${task.id}" cannot submit output from state "${task.state}".`,
+      );
+    }
+
+    if (task.executionRunId !== input.runId) {
+      throw new WorkspaceTimelineConflictError(
+        `Task "${task.id}" is not actively executing under run "${input.runId}".`,
+      );
+    }
+
+    if (
+      task.lockOwnerType !== input.ownerType ||
+      task.lockOwnerId !== input.ownerId
+    ) {
+      throw new WorkspaceTimelineConflictError(
+        `Task "${task.id}" is currently owned by ${task.lockOwnerType ?? "unknown"} "${task.lockOwnerId ?? "unknown"}".`,
+      );
+    }
+  }
+
+  private updateTaskForApprovalSubmission(
+    taskId: string,
+    runId: string,
+    updatedAt: string,
+  ): void {
+    const result = this.database
+      .prepare(
+        [
+          "UPDATE tasks",
+          "SET",
+          "  state = ?,",
+          "  execution_run_id = NULL,",
+          "  updated_at = ?,",
+          "  completed_at = NULL",
+          "WHERE id = ?",
+          "  AND state = ?",
+          "  AND execution_run_id = ?",
+        ].join("\n"),
+      )
+      .run("waiting_approval", updatedAt, taskId, "in_progress", runId);
+
+    if (result.changes === 0) {
+      throw new WorkspaceTimelineConflictError(
+        `Task "${taskId}" changed before its output could be submitted.`,
+      );
+    }
+  }
+
+  private markRunWaitingApproval(runId: string, updatedAt: string): void {
+    const current = this.getRunStatusRecord(runId);
+
+    if (current === undefined) {
+      throw new WorkspaceTimelineNotFoundError(`Run "${runId}" was not found.`);
+    }
+
+    if (current.status === "waiting_approval") {
+      return;
+    }
+
+    if (current.status !== "planned" && current.status !== "running") {
+      throw new WorkspaceTimelineConflictError(
+        `Run "${runId}" cannot enter waiting_approval from status "${current.status}".`,
+      );
+    }
+
+    const result = this.database
+      .prepare(
+        [
+          "UPDATE runs",
+          "SET",
+          "  status = ?,",
+          "  updated_at = ?",
+          "WHERE id = ?",
+          "  AND status = ?",
+        ].join("\n"),
+      )
+      .run("waiting_approval", updatedAt, runId, current.status);
+
+    if (result.changes === 0) {
+      throw new WorkspaceTimelineConflictError(
+        `Run "${runId}" changed before it could enter waiting_approval.`,
+      );
+    }
+  }
+
+  private insertTimelineMessage(input: {
+    readonly projectId: string;
+    readonly workspaceId: string;
+    readonly runId: string | null;
+    readonly actorType: WorkspaceMessageActorType;
+    readonly actorId: string | null;
+    readonly content: string;
+    readonly createdAt: string;
+  }): WorkspaceTimelineMessage {
+    const id = randomUUID();
+
+    this.database
+      .prepare(
+        [
+          "INSERT INTO messages",
+          "  (id, project_id, workspace_id, run_id, actor_type, actor_id, content, created_at)",
+          "VALUES",
+          "  (?, ?, ?, ?, ?, ?, ?, ?)",
+        ].join("\n"),
+      )
+      .run(
+        id,
+        input.projectId,
+        input.workspaceId,
+        input.runId,
+        input.actorType,
+        input.actorId,
+        input.content,
+        input.createdAt,
+      );
+
+    return {
+      id,
+      projectId: input.projectId,
+      workspaceId: input.workspaceId,
+      actorType: input.actorType,
+      actorId: input.actorId,
+      content: input.content,
+      createdAt: input.createdAt,
+    };
+  }
+
+  private createApprovalGuardedTransitionServiceForAuditContext(
+    auditContext: WorkspaceAuditSqlContext,
+  ) {
+    return createApprovalGuardedTransitionService({
+      getTask: (taskId) =>
+        this.database
+          .prepare(
+            [
+              "SELECT",
+              "  id,",
+              "  state",
+              "FROM tasks",
+              "WHERE id = ?",
+              "LIMIT 1",
+            ].join("\n"),
+          )
+          .get(taskId) as { id: string; state: WorkspaceTaskRecord["state"] } | undefined,
+      getRun: (runId) =>
+        this.database
+          .prepare(
+            [
+              "SELECT",
+              "  id,",
+              "  status",
+              "FROM runs",
+              "WHERE id = ?",
+              "LIMIT 1",
+            ].join("\n"),
+          )
+          .get(runId) as { id: string; status: WorkspaceRunStatusRow["status"] } | undefined,
+      listTaskApprovals: (taskId) =>
+        this.database
+          .prepare(
+            [
+              "SELECT",
+              "  id,",
+              "  status,",
+              "  task_id AS taskId,",
+              "  run_id AS runId",
+              "FROM approvals",
+              "WHERE task_id = ?",
+            ].join("\n"),
+          )
+          .all(taskId) as Array<{
+            id: string;
+            status: WorkspaceTaskApprovalStatus;
+            taskId: string | null;
+            runId: string | null;
+          }>,
+      listRunApprovals: (runId) =>
+        this.database
+          .prepare(
+            [
+              "SELECT",
+              "  id,",
+              "  status,",
+              "  task_id AS taskId,",
+              "  run_id AS runId",
+              "FROM approvals",
+              "WHERE run_id = ?",
+            ].join("\n"),
+          )
+          .all(runId) as Array<{
+            id: string;
+            status: WorkspaceTaskApprovalStatus;
+            taskId: string | null;
+            runId: string | null;
+          }>,
+      compareAndSwapTaskState: (taskId, expected, next) =>
+        this.databaseHandle.auditContext.runWithContext(auditContext, () =>
+          this.compareAndSwapApprovalGuardedTaskState(taskId, expected, next),
+        ),
+      compareAndSwapRunStatus: (runId, expected, next) =>
+        this.databaseHandle.auditContext.runWithContext(auditContext, () =>
+          this.compareAndSwapApprovalGuardedRunStatus(runId, expected, next),
+        ),
+    });
+  }
+
+  private compareAndSwapApprovalGuardedTaskState(
+    taskId: string,
+    expected: WorkspaceTaskRecord["state"],
+    next: WorkspaceTaskRecord["state"],
+  ): boolean {
+    const updatedAt = new Date().toISOString();
+    const result = this.database
+      .prepare(
+        [
+          "UPDATE tasks",
+          "SET",
+          "  state = ?,",
+          "  updated_at = ?,",
+          "  completed_at = ?",
+          "WHERE id = ?",
+          "  AND state = ?",
+        ].join("\n"),
+      )
+      .run(
+        next,
+        updatedAt,
+        next === "done" ? updatedAt : null,
+        taskId,
+        expected,
+      );
+
+    return result.changes > 0;
+  }
+
+  private compareAndSwapApprovalGuardedRunStatus(
+    runId: string,
+    expected: WorkspaceRunStatusRow["status"],
+    next: WorkspaceRunStatusRow["status"],
+  ): boolean {
+    const updatedAt = new Date().toISOString();
+    const result = this.database
+      .prepare(
+        [
+          "UPDATE runs",
+          "SET",
+          "  status = ?,",
+          "  updated_at = ?",
+          "WHERE id = ?",
+          "  AND status = ?",
+        ].join("\n"),
+      )
+      .run(next, updatedAt, runId, expected);
+
+    return result.changes > 0;
   }
 
   private compareAndSwapTaskClaim(
