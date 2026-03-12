@@ -192,6 +192,7 @@ describe("@orqis/web runtime", () => {
         expect(firstLandingPage).toContain("PM -> Backend Agent");
         expect(firstLandingPage).toContain("PM -> Reviewer");
         expect(firstLandingPage).toContain("Assigned Agents");
+        expect(firstLandingPage).toContain("Audit Timeline");
         expect(firstLandingPage).toContain("Task Approval Loop");
         expect(firstLandingPage).toContain("Submit output");
         expect(firstLandingPage).toContain("Apply decision");
@@ -1149,6 +1150,221 @@ describe("@orqis/web runtime", () => {
           checkoutRunId: planRunId,
           lockOwnerId: "backend_agent",
         });
+      } finally {
+        await runtime.stop();
+        await cleanup();
+      }
+    },
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
+  );
+
+  it(
+    "lists authenticated workspace audit events with filters and rejects invalid query params",
+    async () => {
+      const { databaseFilePath, cleanup } = await createRuntimeDatabaseFilePath();
+      const runtime = await startOrqisWebRuntime({
+        host: "127.0.0.1",
+        port: 0,
+        persistence: {
+          databaseFilePath,
+        },
+      });
+
+      try {
+        const sessionCookie = await createSessionCookie(runtime.baseUrl, "owner");
+
+        const createProjectResponse = await fetch(`${runtime.baseUrl}/api/projects`, {
+          method: "POST",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            name: "Audit Timeline Runtime Project",
+          }),
+        });
+        const createProjectBody = (await createProjectResponse.json()) as {
+          project?: {
+            projectId: string;
+            workspaceId: string;
+          };
+        };
+
+        expect(createProjectResponse.status).toBe(201);
+
+        const createdProject = createProjectBody.project;
+
+        if (createdProject === undefined) {
+          throw new Error("expected project details for audit timeline assertions");
+        }
+
+        const createPlanResponse = await fetch(
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/planner/runs`,
+          {
+            method: "POST",
+            headers: withSessionCookie(sessionCookie, {
+              "content-type": "application/json",
+            }),
+            body: JSON.stringify({
+              projectId: createdProject.projectId,
+              goal: "implement: wire audit timeline runtime flow",
+            }),
+          },
+        );
+        const createPlanBody = (await createPlanResponse.json()) as {
+          plan?: {
+            runId?: string;
+          };
+        };
+
+        expect(createPlanResponse.status).toBe(201);
+
+        const planRunId = createPlanBody.plan?.runId;
+
+        if (planRunId === undefined) {
+          throw new Error("expected plan runId for audit timeline assertions");
+        }
+
+        const tasksResponse = await fetch(
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/tasks`,
+          {
+            headers: withSessionCookie(sessionCookie),
+          },
+        );
+        const tasksBody = (await tasksResponse.json()) as {
+          tasks?: Array<{
+            id?: string;
+            ownerRole?: string | null;
+          }>;
+        };
+
+        expect(tasksResponse.status).toBe(200);
+        const backendTask = tasksBody.tasks?.find(
+          (task) => task.ownerRole === "backend_agent",
+        );
+        const backendTaskId = backendTask?.id;
+
+        if (backendTaskId === undefined) {
+          throw new Error("expected backend task id for audit timeline assertions");
+        }
+
+        const checkoutResponse = await fetch(
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/tasks/${encodeURIComponent(backendTaskId)}/checkout`,
+          {
+            method: "POST",
+            headers: withSessionCookie(sessionCookie, {
+              "content-type": "application/json",
+            }),
+            body: JSON.stringify({
+              runId: planRunId,
+              ownerType: "agent",
+              ownerId: "backend_agent",
+            }),
+          },
+        );
+
+        expect(checkoutResponse.status).toBe(200);
+
+        const auditEventsUrl =
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/audit-events`;
+
+        const unauthorizedAuditEventsResponse = await fetch(auditEventsUrl);
+        await expectAuthenticationRequiredResponse(unauthorizedAuditEventsResponse);
+        expectNoStoreCacheControl(unauthorizedAuditEventsResponse);
+
+        const allAuditEventsResponse = await fetch(auditEventsUrl, {
+          headers: withSessionCookie(sessionCookie),
+        });
+        const allAuditEventsBody = (await allAuditEventsResponse.json()) as {
+          workspaceId?: string;
+          events?: Array<{
+            workspaceId?: string;
+          }>;
+        };
+
+        expect(allAuditEventsResponse.status).toBe(200);
+        expectNoStoreCacheControl(allAuditEventsResponse);
+        expect(allAuditEventsBody.workspaceId).toBe(createdProject.workspaceId);
+        expect(allAuditEventsBody.events?.length ?? 0).toBeGreaterThan(0);
+        expect(
+          allAuditEventsBody.events?.every(
+            (event) => event.workspaceId === createdProject.workspaceId,
+          ),
+        ).toBe(true);
+
+        const filteredAuditEventsResponse = await fetch(
+          `${auditEventsUrl}?actorType=agent&actorId=backend_agent&entityType=task&taskId=${encodeURIComponent(backendTaskId)}&runId=${encodeURIComponent(planRunId)}&limit=20`,
+          {
+            headers: withSessionCookie(sessionCookie),
+          },
+        );
+        const filteredAuditEventsBody = (await filteredAuditEventsResponse.json()) as {
+          filters?: {
+            actorType?: string;
+            actorId?: string;
+            entityType?: string;
+            taskId?: string;
+            runId?: string;
+            limit?: number;
+          };
+          events?: Array<{
+            actorType?: string;
+            actorId?: string | null;
+            entityType?: string;
+            taskId?: string | null;
+            runId?: string | null;
+          }>;
+        };
+
+        expect(filteredAuditEventsResponse.status).toBe(200);
+        expectNoStoreCacheControl(filteredAuditEventsResponse);
+        expect(filteredAuditEventsBody.filters).toMatchObject({
+          actorType: "agent",
+          actorId: "backend_agent",
+          entityType: "task",
+          taskId: backendTaskId,
+          runId: planRunId,
+          limit: 20,
+        });
+        expect(filteredAuditEventsBody.events?.length ?? 0).toBeGreaterThan(0);
+        expect(
+          filteredAuditEventsBody.events?.every(
+            (event) =>
+              event.actorType === "agent" &&
+              event.actorId === "backend_agent" &&
+              event.entityType === "task" &&
+              event.taskId === backendTaskId &&
+              event.runId === planRunId,
+          ),
+        ).toBe(true);
+
+        const invalidActorTypeResponse = await fetch(
+          `${auditEventsUrl}?actorType=robot`,
+          {
+            headers: withSessionCookie(sessionCookie),
+          },
+        );
+        const invalidActorTypeBody = (await invalidActorTypeResponse.json()) as {
+          error?: string;
+        };
+
+        expect(invalidActorTypeResponse.status).toBe(400);
+        expectNoStoreCacheControl(invalidActorTypeResponse);
+        expect(invalidActorTypeBody.error).toBe(
+          "actorType must be one of: user, agent, system.",
+        );
+
+        const invalidLimitResponse = await fetch(`${auditEventsUrl}?limit=0`, {
+          headers: withSessionCookie(sessionCookie),
+        });
+        const invalidLimitBody = (await invalidLimitResponse.json()) as {
+          error?: string;
+        };
+
+        expect(invalidLimitResponse.status).toBe(400);
+        expectNoStoreCacheControl(invalidLimitResponse);
+        expect(invalidLimitBody.error).toBe(
+          "limit must be an integer between 1 and 500 when provided.",
+        );
       } finally {
         await runtime.stop();
         await cleanup();

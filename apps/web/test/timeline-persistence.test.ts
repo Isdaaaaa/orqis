@@ -686,6 +686,102 @@ describe("@orqis/web workspace timeline persistence", () => {
   );
 
   it(
+    "lists workspace audit events with actor/entity/run/task filters",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "orqis-web-audit-timeline-"));
+      const databaseFilePath = join(tempDir, "audit-timeline.db");
+      const store = createWorkspaceTimelineStore({
+        databaseFilePath,
+      });
+
+      try {
+        const project = store.createProject({
+          name: "Audit Timeline Project",
+        });
+        const plan = store.createProjectManagerPlan({
+          workspaceId: project.workspaceId,
+          projectId: project.projectId,
+          goal: "Ship audit timeline filters",
+          requestedByActorId: "owner",
+        });
+        const backendTask = plan.tasks.find(
+          (task) => task.ownerRole === "backend_agent",
+        );
+
+        if (backendTask === undefined) {
+          throw new Error("expected backend task for audit filter assertions");
+        }
+
+        await store.claimTaskExecution({
+          workspaceId: project.workspaceId,
+          taskId: backendTask.id,
+          runId: plan.runId,
+          ownerType: "agent",
+          ownerId: "backend_agent",
+        });
+
+        const allEvents = store.listWorkspaceAuditEvents(project.workspaceId);
+        expect(allEvents.length).toBeGreaterThan(0);
+        expect(
+          allEvents.every((event) => event.workspaceId === project.workspaceId),
+        ).toBe(true);
+
+        const actorFilteredEvents = store.listWorkspaceAuditEvents(
+          project.workspaceId,
+          {
+            actorType: "agent",
+            actorId: "backend_agent",
+          },
+        );
+        expect(actorFilteredEvents.length).toBeGreaterThan(0);
+        expect(
+          actorFilteredEvents.every(
+            (event) =>
+              event.actorType === "agent" &&
+              event.actorId === "backend_agent",
+          ),
+        ).toBe(true);
+
+        const entityFilteredEvents = store.listWorkspaceAuditEvents(
+          project.workspaceId,
+          {
+            entityType: "task",
+          },
+        );
+        expect(entityFilteredEvents.length).toBeGreaterThan(0);
+        expect(
+          entityFilteredEvents.every((event) => event.entityType === "task"),
+        ).toBe(true);
+
+        const runTaskFilteredEvents = store.listWorkspaceAuditEvents(
+          project.workspaceId,
+          {
+            runId: plan.runId,
+            taskId: backendTask.id,
+          },
+        );
+        expect(runTaskFilteredEvents.length).toBeGreaterThan(0);
+        expect(
+          runTaskFilteredEvents.every(
+            (event) =>
+              event.runId === plan.runId &&
+              event.taskId === backendTask.id,
+          ),
+        ).toBe(true);
+
+        const limitedEvents = store.listWorkspaceAuditEvents(project.workspaceId, {
+          limit: 1,
+        });
+        expect(limitedEvents).toHaveLength(1);
+      } finally {
+        store.close();
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
+  );
+
+  it(
     "lists role-mapped tasks and rejects competing execution claims deterministically",
     async () => {
       const tempDir = await mkdtemp(join(tmpdir(), "orqis-web-task-claims-"));
