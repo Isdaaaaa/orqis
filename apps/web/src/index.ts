@@ -16,9 +16,11 @@ import {
   type ClaimTaskExecutionInput,
   createWorkspaceTimelineStore,
   type AppendWorkspaceTimelineMessageInput,
+  type ListWorkspaceAuditEventsInput,
   type ReleaseTaskExecutionInput,
   type SaveAgentConfigurationInput,
   type SubmitTaskOutputInput,
+  type WorkspaceAuditEventRecord,
   type WorkspaceMessageActorType,
   type WorkspaceTimelineStore,
   type WorkspaceTimelineStoreOptions,
@@ -38,6 +40,8 @@ const PROJECTS_PATH = "/api/projects";
 const AGENT_CONFIGURATION_PATH = "/api/settings/agent-configuration";
 const WORKSPACE_MESSAGES_PATH_PATTERN = /^\/api\/workspaces\/([^/]+)\/messages$/;
 const WORKSPACE_TASKS_PATH_PATTERN = /^\/api\/workspaces\/([^/]+)\/tasks$/;
+const WORKSPACE_AUDIT_EVENTS_PATH_PATTERN =
+  /^\/api\/workspaces\/([^/]+)\/audit-events$/;
 const WORKSPACE_TASK_CHECKOUT_PATH_PATTERN =
   /^\/api\/workspaces\/([^/]+)\/tasks\/([^/]+)\/checkout$/;
 const WORKSPACE_TASK_RELEASE_PATH_PATTERN =
@@ -92,6 +96,17 @@ interface PostWorkspaceMessageBody {
 interface CreateProjectManagerPlanBody {
   readonly projectId: string;
   readonly goal: string;
+}
+
+interface ListWorkspaceAuditEventsQuery {
+  readonly actorType?: WorkspaceMessageActorType;
+  readonly actorId?: string;
+  readonly entityType?: string;
+  readonly entityId?: string;
+  readonly runId?: string;
+  readonly taskId?: string;
+  readonly approvalId?: string;
+  readonly limit?: number;
 }
 
 interface CreateProjectBody {
@@ -841,6 +856,54 @@ function getWebAppHtml(): string {
       line-height: 1.45;
     }
 
+    .audit-timeline-form {
+      margin-top: 0.9rem;
+      display: grid;
+      gap: 0.75rem;
+    }
+
+    .audit-timeline-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.65rem;
+    }
+
+    .audit-timeline-actions {
+      display: flex;
+      gap: 0.55rem;
+      flex-wrap: wrap;
+    }
+
+    .audit-timeline-list {
+      list-style: none;
+      margin: 0.9rem 0 0;
+      padding: 0;
+      display: grid;
+      gap: 0.65rem;
+    }
+
+    .audit-timeline-list li {
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(7, 11, 20, 0.5);
+      padding: 0.55rem 0.62rem;
+      display: grid;
+      gap: 0.35rem;
+    }
+
+    .audit-timeline-details {
+      margin: 0;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(6, 10, 18, 0.65);
+      color: var(--text-muted);
+      font-size: 0.76rem;
+      line-height: 1.35;
+      padding: 0.42rem 0.5rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
     .task-loop-shell {
       border-top: 1px solid var(--panel-border);
       background: rgba(12, 17, 28, 0.85);
@@ -1021,6 +1084,10 @@ function getWebAppHtml(): string {
         grid-template-columns: 1fr;
       }
 
+      .audit-timeline-grid {
+        grid-template-columns: 1fr;
+      }
+
       .config-row-grid {
         grid-template-columns: 1fr;
       }
@@ -1080,6 +1147,7 @@ function getWebAppHtml(): string {
         <button class="channel-item channel-item--thread" type="button" data-view-id="thread-backend" aria-current="false">PM -> Backend Agent</button>
         <button class="channel-item channel-item--thread" type="button" data-view-id="thread-reviewer" aria-current="false">PM -> Reviewer</button>
         <button class="channel-item" type="button" data-view-id="assigned-agents" aria-current="false">Assigned Agents</button>
+        <button class="channel-item" type="button" data-view-id="audit-timeline" aria-current="false">Audit Timeline</button>
       </nav>
 
       <div class="workspace-meta">
@@ -1249,6 +1317,17 @@ function getWebAppHtml(): string {
       responsibility: "",
     });
 
+    const createDefaultAuditTimelineFilters = () => ({
+      actorType: "",
+      actorId: "",
+      entityType: "",
+      entityId: "",
+      runId: "",
+      taskId: "",
+      approvalId: "",
+      limit: "100",
+    });
+
     ${serializeAgentConfigurationEditorClientHelpers()}
 
     const viewMeta = {
@@ -1288,6 +1367,12 @@ function getWebAppHtml(): string {
         subtitle: "Persistent provider, model, and role settings for Project Manager planning and task assignment.",
         timeline: false,
       },
+      "audit-timeline": {
+        context: "Section",
+        title: "Audit Timeline",
+        subtitle: "Append-only workflow event history with actor/entity/run/task filters.",
+        timeline: false,
+      },
     };
 
     let projects = [];
@@ -1300,6 +1385,10 @@ function getWebAppHtml(): string {
     let workspaceTasks = [];
     let selectedTaskId = "";
     let taskLoopLoading = false;
+    let workspaceAuditEvents = [];
+    let auditTimelineFilters = createDefaultAuditTimelineFilters();
+    let auditTimelineLoading = false;
+    let auditTimelineError = "";
 
     const setStatus = (message, isError = false) => {
       status.textContent = message;
@@ -1448,6 +1537,64 @@ function getWebAppHtml(): string {
           option.textContent = optionMeta.label;
           select.appendChild(option);
         }
+      }
+
+      select.value = value;
+      label.appendChild(select);
+      return label;
+    };
+
+    const readAuditFilterValue = (container, fieldName) => {
+      const field = container.querySelector(
+        "[data-audit-filter-field='" + fieldName + "']",
+      );
+
+      if (
+        field === null ||
+        (field.tagName !== "INPUT" &&
+          field.tagName !== "SELECT" &&
+          field.tagName !== "TEXTAREA")
+      ) {
+        return "";
+      }
+
+      return String(field.value ?? "").trim();
+    };
+
+    const readAuditTimelineFiltersFromForm = (form) => {
+      return {
+        actorType: readAuditFilterValue(form, "actorType"),
+        actorId: readAuditFilterValue(form, "actorId"),
+        entityType: readAuditFilterValue(form, "entityType"),
+        entityId: readAuditFilterValue(form, "entityId"),
+        runId: readAuditFilterValue(form, "runId"),
+        taskId: readAuditFilterValue(form, "taskId"),
+        approvalId: readAuditFilterValue(form, "approvalId"),
+        limit: readAuditFilterValue(form, "limit"),
+      };
+    };
+
+    const createAuditFilterTextField = (labelText, fieldName, value, placeholder = "") => {
+      const label = createFieldLabel(labelText);
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = value;
+      input.placeholder = placeholder;
+      input.dataset.auditFilterField = fieldName;
+      label.appendChild(input);
+      return label;
+    };
+
+    const createAuditFilterSelectField = (labelText, fieldName, value, options) => {
+      const label = createFieldLabel(labelText);
+      const select = document.createElement("select");
+      select.dataset.auditFilterField = fieldName;
+
+      for (const optionMeta of options) {
+        const option = document.createElement("option");
+        option.value = optionMeta.value;
+        option.textContent = optionMeta.label;
+        select.appendChild(option);
       }
 
       select.value = value;
@@ -1908,6 +2055,225 @@ function getWebAppHtml(): string {
       }
     };
 
+    const renderAuditTimelineDetail = () => {
+      detailRegion.innerHTML = "";
+
+      const card = document.createElement("div");
+      card.className = "detail-card";
+
+      const title = document.createElement("h3");
+      title.textContent = "Audit Timeline";
+      const description = document.createElement("p");
+      description.textContent =
+        "Inspect append-only workflow events and filter by actor, entity, and run/task correlation.";
+      card.append(title, description);
+
+      const selectedProject = getSelectedProject();
+
+      if (selectedProject === null) {
+        const empty = document.createElement("p");
+        empty.className = "config-empty";
+        empty.textContent = "Create and select a project to inspect audit history.";
+        card.appendChild(empty);
+        detailRegion.appendChild(card);
+        return;
+      }
+
+      const filterForm = document.createElement("form");
+      filterForm.className = "audit-timeline-form";
+
+      const filterGrid = document.createElement("div");
+      filterGrid.className = "audit-timeline-grid";
+      filterGrid.append(
+        createAuditFilterSelectField("Actor type", "actorType", auditTimelineFilters.actorType, [
+          { value: "", label: "Any actor type" },
+          { value: "user", label: "user" },
+          { value: "agent", label: "agent" },
+          { value: "system", label: "system" },
+        ]),
+        createAuditFilterTextField("Actor ID", "actorId", auditTimelineFilters.actorId, "project_manager"),
+        createAuditFilterTextField("Entity type", "entityType", auditTimelineFilters.entityType, "task"),
+        createAuditFilterTextField("Entity ID", "entityId", auditTimelineFilters.entityId, "task-id"),
+        createAuditFilterTextField("Run ID", "runId", auditTimelineFilters.runId, "run-id"),
+        createAuditFilterTextField("Task ID", "taskId", auditTimelineFilters.taskId, "task-id"),
+        createAuditFilterTextField("Approval ID", "approvalId", auditTimelineFilters.approvalId, "approval-id"),
+        createAuditFilterTextField("Limit", "limit", auditTimelineFilters.limit, "100"),
+      );
+
+      const filterActions = document.createElement("div");
+      filterActions.className = "audit-timeline-actions";
+      const applyFiltersButton = document.createElement("button");
+      applyFiltersButton.type = "button";
+      applyFiltersButton.textContent = "Apply filters";
+      applyFiltersButton.addEventListener("click", async () => {
+        auditTimelineFilters = readAuditTimelineFiltersFromForm(filterForm);
+
+        try {
+          await loadAuditTimeline(true);
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : String(error), true);
+        }
+      });
+      const resetFiltersButton = document.createElement("button");
+      resetFiltersButton.type = "button";
+      resetFiltersButton.className = "secondary";
+      resetFiltersButton.textContent = "Reset";
+      resetFiltersButton.addEventListener("click", async () => {
+        auditTimelineFilters = createDefaultAuditTimelineFilters();
+
+        try {
+          await loadAuditTimeline(true);
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : String(error), true);
+        }
+      });
+      const reloadFiltersButton = document.createElement("button");
+      reloadFiltersButton.type = "button";
+      reloadFiltersButton.className = "secondary";
+      reloadFiltersButton.textContent = "Reload";
+      reloadFiltersButton.addEventListener("click", async () => {
+        auditTimelineFilters = readAuditTimelineFiltersFromForm(filterForm);
+
+        try {
+          await loadAuditTimeline(true);
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : String(error), true);
+        }
+      });
+      filterActions.append(applyFiltersButton, resetFiltersButton, reloadFiltersButton);
+      filterForm.append(filterGrid, filterActions);
+      card.appendChild(filterForm);
+
+      if (auditTimelineLoading) {
+        const loading = document.createElement("p");
+        loading.className = "config-empty";
+        loading.textContent = "Loading audit events...";
+        card.appendChild(loading);
+        detailRegion.appendChild(card);
+        return;
+      }
+
+      if (auditTimelineError.length > 0) {
+        const errorMessage = document.createElement("p");
+        errorMessage.className = "config-empty";
+        errorMessage.textContent = auditTimelineError;
+        card.appendChild(errorMessage);
+      }
+
+      const eventsList = document.createElement("ul");
+      eventsList.className = "audit-timeline-list";
+
+      if (!Array.isArray(workspaceAuditEvents) || workspaceAuditEvents.length === 0) {
+        const emptyItem = document.createElement("li");
+        const emptyMeta = document.createElement("p");
+        emptyMeta.className = "config-empty";
+        emptyMeta.textContent = "No audit events matched the current filters.";
+        emptyItem.appendChild(emptyMeta);
+        eventsList.appendChild(emptyItem);
+      } else {
+        for (const event of workspaceAuditEvents) {
+          const item = document.createElement("li");
+          const actorLabel =
+            event.actorId === null || event.actorId === undefined || event.actorId.length === 0
+              ? event.actorType
+              : event.actorType + ":" + event.actorId;
+          const meta = document.createElement("div");
+          meta.className = "meta";
+          meta.textContent =
+            event.createdAt +
+            " • " +
+            event.action +
+            " • actor=" +
+            actorLabel;
+
+          const content = document.createElement("div");
+          content.className = "content";
+          content.textContent =
+            "entity=" +
+            event.entityType +
+            ":" +
+            event.entityId +
+            " • run=" +
+            (event.runId ?? "none") +
+            " • task=" +
+            (event.taskId ?? "none") +
+            " • approval=" +
+            (event.approvalId ?? "none");
+
+          item.append(meta, content);
+
+          if (typeof event.detailsJson === "string" && event.detailsJson.length > 0) {
+            const details = document.createElement("pre");
+            details.className = "audit-timeline-details";
+            details.textContent = event.detailsJson;
+            item.appendChild(details);
+          }
+
+          eventsList.appendChild(item);
+        }
+      }
+
+      card.appendChild(eventsList);
+      detailRegion.appendChild(card);
+    };
+
+    const loadAuditTimeline = async (announce = false) => {
+      const selectedProject = getSelectedProject();
+      const url = auditEventsUrl();
+
+      if (selectedProject === null || url === null) {
+        workspaceAuditEvents = [];
+        auditTimelineError = "";
+
+        if (activeViewId === "audit-timeline") {
+          renderDetailView();
+        }
+
+        if (announce) {
+          setStatus("Create and select a project first.", true);
+        }
+
+        return;
+      }
+
+      auditTimelineError = "";
+      auditTimelineLoading = true;
+
+      if (activeViewId === "audit-timeline") {
+        renderDetailView();
+      }
+
+      try {
+        const response = await fetch(url);
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error ?? "Failed to load audit timeline.");
+        }
+
+        workspaceAuditEvents = Array.isArray(payload.events) ? payload.events : [];
+
+        if (announce) {
+          setStatus(
+            "Audit timeline loaded with " +
+              workspaceAuditEvents.length +
+              " event" +
+              (workspaceAuditEvents.length === 1 ? "" : "s") +
+              ".",
+          );
+        }
+      } catch (error) {
+        auditTimelineError = error instanceof Error ? error.message : String(error);
+        throw error;
+      } finally {
+        auditTimelineLoading = false;
+
+        if (activeViewId === "audit-timeline") {
+          renderDetailView();
+        }
+      }
+    };
+
     const renderDetailView = () => {
       if (activeViewId === "files") {
         detailRegion.innerHTML =
@@ -1936,6 +2302,11 @@ function getWebAppHtml(): string {
         }
 
         renderAgentConfigurationDetail();
+        return;
+      }
+
+      if (activeViewId === "audit-timeline") {
+        renderAuditTimelineDetail();
         return;
       }
 
@@ -1985,6 +2356,53 @@ function getWebAppHtml(): string {
       }
 
       return "/api/workspaces/" + encodeURIComponent(selectedProject.workspaceId) + "/tasks";
+    };
+
+    const auditEventsUrl = () => {
+      const selectedProject = getSelectedProject();
+
+      if (selectedProject === null) {
+        return null;
+      }
+
+      const params = new URLSearchParams();
+
+      if (auditTimelineFilters.actorType.length > 0) {
+        params.set("actorType", auditTimelineFilters.actorType);
+      }
+
+      if (auditTimelineFilters.actorId.length > 0) {
+        params.set("actorId", auditTimelineFilters.actorId);
+      }
+
+      if (auditTimelineFilters.entityType.length > 0) {
+        params.set("entityType", auditTimelineFilters.entityType);
+      }
+
+      if (auditTimelineFilters.entityId.length > 0) {
+        params.set("entityId", auditTimelineFilters.entityId);
+      }
+
+      if (auditTimelineFilters.runId.length > 0) {
+        params.set("runId", auditTimelineFilters.runId);
+      }
+
+      if (auditTimelineFilters.taskId.length > 0) {
+        params.set("taskId", auditTimelineFilters.taskId);
+      }
+
+      if (auditTimelineFilters.approvalId.length > 0) {
+        params.set("approvalId", auditTimelineFilters.approvalId);
+      }
+
+      if (auditTimelineFilters.limit.length > 0) {
+        params.set("limit", auditTimelineFilters.limit);
+      }
+
+      const basePath =
+        "/api/workspaces/" + encodeURIComponent(selectedProject.workspaceId) + "/audit-events";
+      const query = params.toString();
+      return query.length > 0 ? basePath + "?" + query : basePath;
     };
 
     const taskOutputUrl = (taskId) => {
@@ -2256,6 +2674,8 @@ function getWebAppHtml(): string {
               if (activeViewId === "main-chat") {
                 await reloadTasks(false);
               }
+            } else if (activeViewId === "audit-timeline") {
+              await loadAuditTimeline();
             }
           } catch (error) {
             setStatus(error instanceof Error ? error.message : String(error), true);
@@ -2303,7 +2723,14 @@ function getWebAppHtml(): string {
         contentInput.disabled = true;
         workspaceTasks = [];
         selectedTaskId = "";
+        workspaceAuditEvents = [];
+        auditTimelineError = "";
         renderTaskOptions();
+
+        if (activeViewId === "audit-timeline") {
+          renderDetailView();
+        }
+
         return;
       }
 
@@ -2317,6 +2744,10 @@ function getWebAppHtml(): string {
       actorIdInput.disabled = !timelineEnabled;
       contentInput.disabled = !timelineEnabled;
       updateTaskLoopState();
+
+      if (activeViewId === "audit-timeline") {
+        renderDetailView();
+      }
     };
 
     const timelineUrl = () => {
@@ -2430,6 +2861,8 @@ function getWebAppHtml(): string {
 
       if (activeViewId === "main-chat") {
         await reloadTasks(false);
+      } else if (activeViewId === "audit-timeline") {
+        await loadAuditTimeline(false);
       }
 
       return true;
@@ -2731,9 +3164,15 @@ function getWebAppHtml(): string {
       }
 
       const shouldLoadAgentConfiguration = viewId === "assigned-agents";
+      const shouldLoadAuditTimeline = viewId === "audit-timeline";
 
       if (shouldLoadAgentConfiguration) {
         agentConfigurationLoading = true;
+      }
+
+      if (shouldLoadAuditTimeline) {
+        auditTimelineLoading = true;
+        auditTimelineError = "";
       }
 
       activeViewId = viewId;
@@ -2750,6 +3189,11 @@ function getWebAppHtml(): string {
 
       if (shouldLoadAgentConfiguration) {
         await loadAgentConfiguration(true);
+        return;
+      }
+
+      if (shouldLoadAuditTimeline) {
+        await loadAuditTimeline(true);
         return;
       }
 
@@ -2810,6 +3254,11 @@ function getWebAppHtml(): string {
           if (activeViewId === "main-chat") {
             await reloadTasks(false);
           }
+          return;
+        }
+
+        if (activeViewId === "audit-timeline") {
+          await loadAuditTimeline();
           return;
         }
 
@@ -3270,6 +3719,66 @@ function parseCreateProjectManagerPlanBody(
     value: {
       projectId,
       goal,
+    },
+  };
+}
+
+function parseListWorkspaceAuditEventsQuery(
+  request: IncomingMessage,
+):
+  | { ok: true; value: ListWorkspaceAuditEventsQuery }
+  | { ok: false; error: string } {
+  const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+  const actorType = normalizeOptionalString(requestUrl.searchParams.get("actorType"));
+
+  if (actorType !== undefined && !isWorkspaceMessageActorType(actorType)) {
+    return {
+      ok: false,
+      error: `actorType must be one of: ${WORKSPACE_MESSAGE_ACTOR_TYPES.join(", ")}.`,
+    };
+  }
+
+  const actorId = normalizeOptionalString(requestUrl.searchParams.get("actorId"));
+  const entityType = normalizeOptionalString(requestUrl.searchParams.get("entityType"));
+  const entityId = normalizeOptionalString(requestUrl.searchParams.get("entityId"));
+  const runId = normalizeOptionalString(requestUrl.searchParams.get("runId"));
+  const taskId = normalizeOptionalString(requestUrl.searchParams.get("taskId"));
+  const approvalId = normalizeOptionalString(requestUrl.searchParams.get("approvalId"));
+  const limitValue = normalizeOptionalString(requestUrl.searchParams.get("limit"));
+
+  if (limitValue !== undefined && !/^\d+$/.test(limitValue)) {
+    return {
+      ok: false,
+      error: "limit must be an integer between 1 and 500 when provided.",
+    };
+  }
+
+  const limit =
+    limitValue === undefined
+      ? undefined
+      : Number.parseInt(limitValue, 10);
+
+  if (
+    limit !== undefined &&
+    (!Number.isSafeInteger(limit) || limit < 1 || limit > 500)
+  ) {
+    return {
+      ok: false,
+      error: "limit must be an integer between 1 and 500 when provided.",
+    };
+  }
+
+  return {
+    ok: true,
+    value: {
+      actorType,
+      actorId,
+      entityType,
+      entityId,
+      runId,
+      taskId,
+      approvalId,
+      limit,
     },
   };
 }
@@ -3771,6 +4280,27 @@ function resolveWorkspaceMessagesPath(pathname: string): string | undefined {
 
 function resolveWorkspaceTasksPath(pathname: string): string | undefined {
   const match = pathname.match(WORKSPACE_TASKS_PATH_PATTERN);
+
+  if (match === null) {
+    return undefined;
+  }
+
+  const encodedWorkspaceId = match[1];
+
+  if (encodedWorkspaceId === undefined) {
+    return undefined;
+  }
+
+  try {
+    const decodedWorkspaceId = decodeURIComponent(encodedWorkspaceId);
+    return decodedWorkspaceId.trim().length > 0 ? decodedWorkspaceId : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveWorkspaceAuditEventsPath(pathname: string): string | undefined {
+  const match = pathname.match(WORKSPACE_AUDIT_EVENTS_PATH_PATTERN);
 
   if (match === null) {
     return undefined;
@@ -4450,6 +4980,63 @@ async function handleWorkspaceTasksRoute(
       writeJson(response, 200, {
         workspaceId,
         tasks,
+      });
+      return;
+    } catch (error) {
+      if (error instanceof WorkspaceTimelineValidationError) {
+        writeJson(response, 400, {
+          error: error.message,
+        });
+        return;
+      }
+
+      throw error;
+    }
+  }
+
+  response.setHeader("allow", "GET");
+  writeJson(response, 405, {
+    error: "Method Not Allowed",
+    method: request.method ?? "UNKNOWN",
+  });
+}
+
+async function handleWorkspaceAuditEventsRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  context: RuntimeRequestContext,
+  workspaceId: string,
+): Promise<void> {
+  if (request.method === "GET") {
+    const parsedQuery = parseListWorkspaceAuditEventsQuery(request);
+
+    if (!parsedQuery.ok) {
+      writeJson(response, 400, {
+        error: parsedQuery.error,
+      });
+      return;
+    }
+
+    try {
+      const filters: ListWorkspaceAuditEventsInput = {
+        actorType: parsedQuery.value.actorType,
+        actorId: parsedQuery.value.actorId,
+        entityType: parsedQuery.value.entityType,
+        entityId: parsedQuery.value.entityId,
+        runId: parsedQuery.value.runId,
+        taskId: parsedQuery.value.taskId,
+        approvalId: parsedQuery.value.approvalId,
+        limit: parsedQuery.value.limit,
+      };
+      const events = context.timelineStore.listWorkspaceAuditEvents(
+        workspaceId,
+        filters,
+      );
+
+      writeJson(response, 200, {
+        workspaceId,
+        filters,
+        events,
       });
       return;
     } catch (error) {
@@ -5253,6 +5840,18 @@ async function handleRequest(
       context,
       taskApprovalRoute,
       session,
+    );
+    return;
+  }
+
+  const auditWorkspaceId = resolveWorkspaceAuditEventsPath(pathname);
+
+  if (auditWorkspaceId !== undefined) {
+    await handleWorkspaceAuditEventsRoute(
+      request,
+      response,
+      context,
+      auditWorkspaceId,
     );
     return;
   }

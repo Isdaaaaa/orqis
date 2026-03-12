@@ -281,9 +281,12 @@ Safe to defer:
   - Summary (follow-up): Added core, persistence, and runtime regression coverage for command routing, command validation, and workflow status-message emission.
   - Changed: `packages/core/src/project-manager-planner-service.ts`, `packages/core/test/project-manager-planner-service.test.ts`, `apps/web/src/persistence.ts`, `apps/web/test/timeline-persistence.test.ts`, `apps/web/test/runtime.test.ts`, `README.md`, `TODO.md`.
 
-- [ ] Add audit timeline view
+- [x] Add audit timeline view
   - Acceptance criteria: key actions (task create/assign, approval, run status changes) are traceable in UI.
   - Acceptance criteria: timeline supports filtering by actor, entity, and run/task correlation.
+  - Summary: Added an `Audit Timeline` workspace section in the web shell that renders append-only workflow events with filter controls for actor, entity, and run/task/approval correlation.
+  - Summary (follow-up): Added authenticated runtime API support for `GET /api/workspaces/:workspaceId/audit-events` with validated query filters and deterministic limit bounds, plus persistence/runtime regression coverage for filter behavior and invalid query handling.
+  - Changed: `apps/web/src/index.ts`, `apps/web/src/persistence.ts`, `apps/web/test/timeline-persistence.test.ts`, `apps/web/test/runtime.test.ts`, `README.md`, `TODO.md`.
 
 - [ ] Persist selected project, section, and thread in URL/local state so refresh restores workspace context
   - Acceptance criteria: refresh restores the active project, selected workspace section, and open thread without manual reselection.

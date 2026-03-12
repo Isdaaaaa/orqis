@@ -76,6 +76,33 @@ export interface WorkspaceTimelineMessage {
   readonly createdAt: string;
 }
 
+export interface WorkspaceAuditEventRecord {
+  readonly id: string;
+  readonly projectId: string;
+  readonly workspaceId: string;
+  readonly runId: string | null;
+  readonly taskId: string | null;
+  readonly approvalId: string | null;
+  readonly actorType: WorkspaceMessageActorType;
+  readonly actorId: string | null;
+  readonly entityType: string;
+  readonly entityId: string;
+  readonly action: string;
+  readonly detailsJson: string | null;
+  readonly createdAt: string;
+}
+
+export interface ListWorkspaceAuditEventsInput {
+  readonly actorType?: WorkspaceMessageActorType;
+  readonly actorId?: string;
+  readonly entityType?: string;
+  readonly entityId?: string;
+  readonly runId?: string;
+  readonly taskId?: string;
+  readonly approvalId?: string;
+  readonly limit?: number;
+}
+
 export interface AppendWorkspaceTimelineMessageInput {
   readonly workspaceId: string;
   readonly projectId?: string;
@@ -264,6 +291,10 @@ export interface WorkspaceTimelineStore {
   createProject(input: CreateProjectInput): ProjectWorkspaceSummary;
   createProjectManagerPlan(input: CreateProjectManagerPlanInput): ProjectManagerPlanRecord;
   listWorkspaceTasks(workspaceId: string): WorkspaceTaskRecord[];
+  listWorkspaceAuditEvents(
+    workspaceId: string,
+    input?: ListWorkspaceAuditEventsInput,
+  ): WorkspaceAuditEventRecord[];
   claimTaskExecution(input: ClaimTaskExecutionInput): Promise<WorkspaceTaskRecord>;
   releaseTaskExecution(input: ReleaseTaskExecutionInput): Promise<WorkspaceTaskRecord>;
   submitTaskOutput(input: SubmitTaskOutputInput): Promise<SubmitTaskOutputResult>;
@@ -423,6 +454,22 @@ interface WorkspaceMessageRow {
   readonly actorType: WorkspaceMessageActorType;
   readonly actorId: string | null;
   readonly content: string;
+  readonly createdAt: string;
+}
+
+interface WorkspaceAuditEventRow {
+  readonly id: string;
+  readonly projectId: string;
+  readonly workspaceId: string;
+  readonly runId: string | null;
+  readonly taskId: string | null;
+  readonly approvalId: string | null;
+  readonly actorType: WorkspaceMessageActorType;
+  readonly actorId: string | null;
+  readonly entityType: string;
+  readonly entityId: string;
+  readonly action: string;
+  readonly detailsJson: string | null;
   readonly createdAt: string;
 }
 
@@ -771,6 +818,26 @@ function mapWorkspaceTaskApprovalRow(
     resubmittedAt: row.resubmittedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+  };
+}
+
+function mapWorkspaceAuditEventRow(
+  row: WorkspaceAuditEventRow,
+): WorkspaceAuditEventRecord {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    workspaceId: row.workspaceId,
+    runId: row.runId,
+    taskId: row.taskId,
+    approvalId: row.approvalId,
+    actorType: row.actorType,
+    actorId: row.actorId,
+    entityType: row.entityType,
+    entityId: row.entityId,
+    action: row.action,
+    detailsJson: row.detailsJson,
+    createdAt: row.createdAt,
   };
 }
 
@@ -1439,6 +1506,109 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
     );
 
     return this.queryWorkspaceTasks(normalizedWorkspaceId);
+  }
+
+  listWorkspaceAuditEvents(
+    workspaceId: string,
+    input: ListWorkspaceAuditEventsInput = {},
+  ): WorkspaceAuditEventRecord[] {
+    const normalizedWorkspaceId = normalizeRequiredString(
+      workspaceId,
+      "workspaceId",
+    );
+    const actorType = normalizeOptionalString(input.actorType);
+
+    if (actorType !== undefined && !isWorkspaceMessageActorType(actorType)) {
+      throw new WorkspaceTimelineValidationError(
+        `actorType must be one of: ${WORKSPACE_MESSAGE_ACTOR_TYPES.join(", ")}.`,
+      );
+    }
+
+    const actorId = normalizeOptionalString(input.actorId);
+    const entityType = normalizeOptionalString(input.entityType);
+    const entityId = normalizeOptionalString(input.entityId);
+    const runId = normalizeOptionalString(input.runId);
+    const taskId = normalizeOptionalString(input.taskId);
+    const approvalId = normalizeOptionalString(input.approvalId);
+    const limit =
+      input.limit === undefined
+        ? 200
+        : Number.isInteger(input.limit) &&
+            input.limit >= 1 &&
+            input.limit <= 500
+          ? input.limit
+          : undefined;
+
+    if (limit === undefined) {
+      throw new WorkspaceTimelineValidationError(
+        "limit must be an integer between 1 and 500 when provided.",
+      );
+    }
+
+    const whereClauses = ["workspace_id = ?"];
+    const parameters: Array<string | number> = [normalizedWorkspaceId];
+
+    if (actorType !== undefined) {
+      whereClauses.push("actor_type = ?");
+      parameters.push(actorType);
+    }
+
+    if (actorId !== undefined) {
+      whereClauses.push("actor_id = ?");
+      parameters.push(actorId);
+    }
+
+    if (entityType !== undefined) {
+      whereClauses.push("entity_type = ?");
+      parameters.push(entityType);
+    }
+
+    if (entityId !== undefined) {
+      whereClauses.push("entity_id = ?");
+      parameters.push(entityId);
+    }
+
+    if (runId !== undefined) {
+      whereClauses.push("run_id = ?");
+      parameters.push(runId);
+    }
+
+    if (taskId !== undefined) {
+      whereClauses.push("task_id = ?");
+      parameters.push(taskId);
+    }
+
+    if (approvalId !== undefined) {
+      whereClauses.push("approval_id = ?");
+      parameters.push(approvalId);
+    }
+
+    const rows = this.database
+      .prepare(
+        [
+          "SELECT",
+          "  id,",
+          "  project_id AS projectId,",
+          "  workspace_id AS workspaceId,",
+          "  run_id AS runId,",
+          "  task_id AS taskId,",
+          "  approval_id AS approvalId,",
+          "  actor_type AS actorType,",
+          "  actor_id AS actorId,",
+          "  entity_type AS entityType,",
+          "  entity_id AS entityId,",
+          "  action,",
+          "  details_json AS detailsJson,",
+          "  created_at AS createdAt",
+          "FROM audit_events",
+          `WHERE ${whereClauses.join(" AND ")}`,
+          "ORDER BY created_at DESC, rowid DESC",
+          "LIMIT ?",
+        ].join("\n"),
+      )
+      .all(...parameters, limit) as WorkspaceAuditEventRow[];
+
+    return rows.map(mapWorkspaceAuditEventRow);
   }
 
   async claimTaskExecution(
