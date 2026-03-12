@@ -1017,6 +1017,304 @@ describe("@orqis/web runtime", () => {
   );
 
   it(
+    "supports authenticated task output submission, revision requests, resubmission, and approval decisions",
+    async () => {
+      const { databaseFilePath, cleanup } = await createRuntimeDatabaseFilePath();
+      const runtime = await startOrqisWebRuntime({
+        host: "127.0.0.1",
+        port: 0,
+        persistence: {
+          databaseFilePath,
+        },
+      });
+
+      try {
+        const sessionCookie = await createSessionCookie(runtime.baseUrl, "owner");
+
+        const createProjectResponse = await fetch(`${runtime.baseUrl}/api/projects`, {
+          method: "POST",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            name: "Task Approval Runtime Project",
+          }),
+        });
+        const createProjectBody = (await createProjectResponse.json()) as {
+          project?: {
+            projectId: string;
+            workspaceId: string;
+          };
+        };
+
+        expect(createProjectResponse.status).toBe(201);
+
+        const createdProject = createProjectBody.project;
+
+        if (createdProject === undefined) {
+          throw new Error("expected project details for task approval assertions");
+        }
+
+        const createPlanResponse = await fetch(
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/planner/runs`,
+          {
+            method: "POST",
+            headers: withSessionCookie(sessionCookie, {
+              "content-type": "application/json",
+            }),
+            body: JSON.stringify({
+              projectId: createdProject.projectId,
+              goal: "Ship the task approval runtime flow",
+            }),
+          },
+        );
+        const createPlanBody = (await createPlanResponse.json()) as {
+          plan?: {
+            runId?: string;
+          };
+        };
+
+        expect(createPlanResponse.status).toBe(201);
+
+        const planRunId = createPlanBody.plan?.runId;
+
+        if (planRunId === undefined) {
+          throw new Error("expected plan runId for task approval assertions");
+        }
+
+        const tasksResponse = await fetch(
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/tasks`,
+          {
+            headers: withSessionCookie(sessionCookie),
+          },
+        );
+        const tasksBody = (await tasksResponse.json()) as {
+          tasks?: Array<{
+            id?: string;
+            ownerRole?: string | null;
+            title?: string;
+          }>;
+        };
+
+        expect(tasksResponse.status).toBe(200);
+
+        const backendTask = tasksBody.tasks?.find(
+          (task) => task.ownerRole === "backend_agent",
+        );
+
+        if (backendTask?.id === undefined || backendTask.title === undefined) {
+          throw new Error("expected backend task details for task approval assertions");
+        }
+
+        const checkoutResponse = await fetch(
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/tasks/${encodeURIComponent(backendTask.id)}/checkout`,
+          {
+            method: "POST",
+            headers: withSessionCookie(sessionCookie, {
+              "content-type": "application/json",
+            }),
+            body: JSON.stringify({
+              runId: planRunId,
+              ownerType: "agent",
+              ownerId: "backend_agent",
+            }),
+          },
+        );
+
+        expect(checkoutResponse.status).toBe(200);
+        expectNoStoreCacheControl(checkoutResponse);
+
+        const outputUrl =
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/tasks/${encodeURIComponent(backendTask.id)}/output`;
+        const approvalUrl =
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/tasks/${encodeURIComponent(backendTask.id)}/approval`;
+
+        await expectAuthenticationRequiredResponse(
+          await fetch(outputUrl, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({
+              runId: planRunId,
+              ownerType: "agent",
+              ownerId: "backend_agent",
+              output: "Unauthorized task output",
+            }),
+          }),
+        );
+
+        const submitOutputResponse = await fetch(outputUrl, {
+          method: "POST",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            runId: planRunId,
+            ownerType: "agent",
+            ownerId: "backend_agent",
+            output: "Implemented the initial approval flow.",
+          }),
+        });
+        const submitOutputBody = (await submitOutputResponse.json()) as {
+          task?: {
+            state?: string;
+            executionRunId?: string | null;
+          };
+          approval?: {
+            status?: string;
+          };
+        };
+
+        expect(submitOutputResponse.status).toBe(200);
+        expectNoStoreCacheControl(submitOutputResponse);
+        expect(submitOutputBody.task).toMatchObject({
+          state: "waiting_approval",
+          executionRunId: null,
+        });
+        expect(submitOutputBody.approval?.status).toBe("pending");
+
+        const revisionRequestedResponse = await fetch(approvalUrl, {
+          method: "POST",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            decision: "revision_requested",
+            decisionSummary: "Handle the retry path before merge.",
+          }),
+        });
+        const revisionRequestedBody =
+          (await revisionRequestedResponse.json()) as {
+            task?: {
+              state?: string;
+            };
+            approval?: {
+              status?: string;
+              decisionSummary?: string | null;
+            };
+          };
+
+        expect(revisionRequestedResponse.status).toBe(200);
+        expectNoStoreCacheControl(revisionRequestedResponse);
+        expect(revisionRequestedBody.task?.state).toBe("in_progress");
+        expect(revisionRequestedBody.approval).toMatchObject({
+          status: "revision_requested",
+          decisionSummary: "Handle the retry path before merge.",
+        });
+
+        const reclaimResponse = await fetch(
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/tasks/${encodeURIComponent(backendTask.id)}/checkout`,
+          {
+            method: "POST",
+            headers: withSessionCookie(sessionCookie, {
+              "content-type": "application/json",
+            }),
+            body: JSON.stringify({
+              runId: planRunId,
+              ownerType: "agent",
+              ownerId: "backend_agent",
+            }),
+          },
+        );
+
+        expect(reclaimResponse.status).toBe(200);
+
+        const resubmittedOutputResponse = await fetch(outputUrl, {
+          method: "POST",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            runId: planRunId,
+            ownerType: "agent",
+            ownerId: "backend_agent",
+            output: "Implemented the retry path and resubmitted the output.",
+          }),
+        });
+        const resubmittedOutputBody =
+          (await resubmittedOutputResponse.json()) as {
+            approval?: {
+              status?: string;
+            };
+          };
+
+        expect(resubmittedOutputResponse.status).toBe(200);
+        expectNoStoreCacheControl(resubmittedOutputResponse);
+        expect(resubmittedOutputBody.approval?.status).toBe("resubmitted");
+
+        const approvedResponse = await fetch(approvalUrl, {
+          method: "POST",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            decision: "approved",
+          }),
+        });
+        const approvedBody = (await approvedResponse.json()) as {
+          task?: {
+            state?: string;
+            completedAt?: string | null;
+          };
+          approval?: {
+            status?: string;
+            decisionByActorId?: string | null;
+          };
+          projectManagerMessage?: {
+            content?: string;
+          };
+        };
+
+        expect(approvedResponse.status).toBe(200);
+        expectNoStoreCacheControl(approvedResponse);
+        expect(approvedBody.task?.state).toBe("done");
+        expect(approvedBody.task?.completedAt).toBeTypeOf("string");
+        expect(approvedBody.approval).toMatchObject({
+          status: "approved",
+          decisionByActorId: "owner",
+        });
+        expect(approvedBody.projectManagerMessage?.content).toContain(
+          `Project Manager received approval for "${backendTask.title}"`,
+        );
+
+        const timelineResponse = await fetch(
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/messages`,
+          {
+            headers: withSessionCookie(sessionCookie),
+          },
+        );
+        const timelineBody = (await timelineResponse.json()) as {
+          messages?: Array<{
+            content?: string;
+          }>;
+        };
+
+        expect(timelineResponse.status).toBe(200);
+        expectNoStoreCacheControl(timelineResponse);
+        expect(timelineBody.messages?.map((message) => message.content)).toEqual(
+          expect.arrayContaining([
+            "Ship the task approval runtime flow",
+            expect.stringContaining(
+              `Task output submitted for "${backendTask.title}"`,
+            ),
+            expect.stringContaining(
+              `User "owner" requested revisions for "${backendTask.title}"`,
+            ),
+            expect.stringContaining(
+              `User "owner" approved "${backendTask.title}"`,
+            ),
+          ]),
+        );
+      } finally {
+        await runtime.stop();
+        await cleanup();
+      }
+    },
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
+  );
+
+  it(
     "adds Secure to session cookies when auth requests are forwarded as HTTPS",
     async () => {
       const { databaseFilePath, cleanup } = await createRuntimeDatabaseFilePath();

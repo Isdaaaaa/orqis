@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Continue Phase 3 with the user approval/reject loop now that Project Manager planning, task assignment records, specialist role mapping, and lock-safe task checkout persist in workspace state.
+Advance Phase 3 with first-class run lifecycle transitions now that task output submission, approval/reject decisions, and revision/resubmission loops persist in workspace state.
 
 ## Completed
 
@@ -242,10 +242,14 @@ Safe to defer:
   - Summary (follow-up): Added focused core, persistence, and authenticated runtime regressions for mismatched run-owner claim/release payloads.
   - Changed: `packages/core/src/task-claim-service.ts`, `packages/core/test/task-claim-service.test.ts`, `apps/web/src/index.ts`, `apps/web/src/persistence.ts`, `apps/web/test/timeline-persistence.test.ts`, `apps/web/test/runtime.test.ts`, `README.md`, `TODO.md`.
 
-- [ ] Implement user approval/reject loop for task outputs
+- [x] Implement user approval/reject loop for task outputs
   - Acceptance criteria: user action updates approval status, audit event is written, and PM receives the decision.
   - Acceptance criteria: flow supports revision request and agent resubmission without losing prior decision history.
   - Acceptance criteria: PM cannot advance guarded tasks/runs while related approvals are unresolved.
+  - Summary: Added persisted task-output submission and approval-decision flows in the web timeline store, reusing the existing claim and approval-guard services to move tasks into and out of `waiting_approval`.
+  - Summary (follow-up): Reused one durable approval record per task across `pending -> revision_requested -> resubmitted -> approved/rejected`, preserving prior decisions through append-only audit events while posting PM-visible timeline updates for submissions and user decisions.
+  - Summary (follow-up): Exposed authenticated runtime APIs for task output submission and approval decisions, then added persistence/runtime regression coverage for approve, revision request, resubmission, final approval, run-status updates, and audit-history continuity.
+  - Changed: `apps/web/src/persistence.ts`, `apps/web/src/index.ts`, `apps/web/test/timeline-persistence.test.ts`, `apps/web/test/runtime.test.ts`, `README.md`, `TODO.md`.
 
 - [ ] Add first run lifecycle states (`planned`, `running`, `waiting_approval`, `done`, `failed`)
   - Acceptance criteria: run state transitions are validated and invalid transitions are rejected.
@@ -254,6 +258,8 @@ Safe to defer:
 
 Unclassified:
 - [ ] Align workspace agent-thread navigation with saved role mappings so customized planner owner roles have matching visible thread labels and navigation entries
+- [ ] Expose the task output approval loop in the workspace shell so users can submit outputs and approve/reject them without calling runtime APIs directly
+- [ ] Add persistence/runtime regression coverage for the `decision: "rejected"` approval path (including task/run state effects and PM-visible timeline messaging)
 
 ## Phase 4: Workflow hardening and integration
 
