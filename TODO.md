@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Advance Phase 3 with first-class run lifecycle transitions now that task output submission, approval/reject decisions, and revision/resubmission loops persist in workspace state.
+Close Phase 3 by exposing task output submission and approval/reject actions directly in the workspace shell so the full approval loop is usable without calling runtime APIs manually.
 
 ## Completed
 
@@ -260,11 +260,15 @@ Safe to defer:
 
 #### Hardening before Phase 4
 
-Unclassified:
-- [ ] Align workspace agent-thread navigation with saved role mappings so customized planner owner roles have matching visible thread labels and navigation entries
+Must finish before Phase 4:
 - [ ] Expose the task output approval loop in the workspace shell so users can submit outputs and approve/reject them without calling runtime APIs directly
+
+Safe to defer:
 - [ ] Add runtime regression coverage for the `decision: "rejected"` approval path (including task/run state effects and PM-visible timeline messaging) now that persistence coverage exists
 - [ ] Add runtime/persistence regression coverage for multi-approval sequencing (for example one task `revision_requested` while another run-linked approval remains unresolved) so waiting_approval gating and follow-up claim behavior stay intentional and stable
+
+Move to later phase:
+- [ ] Align workspace agent-thread navigation with saved role mappings so customized planner owner roles have matching visible thread labels and navigation entries
 
 ## Phase 4: Workflow hardening and integration
 
