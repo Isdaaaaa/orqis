@@ -178,6 +178,10 @@ Move to later phase:
 
 ## Phase 3: Project Manager planning and task approvals
 
+- [ ] Add persistent provider/model/agent-role configuration
+  - Acceptance criteria: user can configure at least one provider, one model, and at least two agent roles in the web UI.
+  - Acceptance criteria: configuration persists across restarts and is available to Project Manager planning and task-assignment flows.
+
 - [ ] Implement Project Manager planner service (`goal -> plan -> task list`)
   - Acceptance criteria: planner persists plan and emits visible plan message in workspace chat.
 

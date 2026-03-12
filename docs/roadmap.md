@@ -84,6 +84,7 @@ Goal:
 
 Deliverables:
 
+- Provider/model/agent-role configuration persistence and settings UI.
 - PM planner (`goal -> plan -> tasks`).
 - Task assignment with role mapping and lock-safe claim/release behavior.
 - Task output submission model.
@@ -97,7 +98,7 @@ Dependency notes:
 
 Parallelization opportunities:
 
-- PM planner logic and approval UI can progress in parallel after core state contracts are fixed.
+- Provider/model settings UI and PM planner logic can progress in parallel after the shared configuration contract is fixed.
 
 ## Phase 4: Workflow hardening
 
