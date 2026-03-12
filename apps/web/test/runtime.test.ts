@@ -197,6 +197,24 @@ describe("@orqis/web runtime", () => {
         expect(firstLandingPage).toContain("Submit output");
         expect(firstLandingPage).toContain("Apply decision");
         expect(firstLandingPage).toContain("Log out");
+        expect(firstLandingPage).toContain(
+          'const workspaceContextStorageKey = "orqis.workspace-context.v1";',
+        );
+        expect(firstLandingPage).toContain(
+          'const workspaceContextProjectQueryKey = "projectId";',
+        );
+        expect(firstLandingPage).toContain(
+          'const workspaceContextSectionQueryKey = "section";',
+        );
+        expect(firstLandingPage).toContain(
+          'const workspaceContextThreadQueryKey = "thread";',
+        );
+        expect(firstLandingPage).toContain(
+          "const initialWorkspaceContext = resolveInitialWorkspaceContext();",
+        );
+        expect(firstLandingPage).toContain(
+          "window.history.replaceState(null, \"\", nextRelativeUrl);",
+        );
         expectNoStoreCacheControl(firstLandingResponse);
 
         const refreshedLandingResponse = await fetch(runtime.baseUrl, {

@@ -288,8 +288,11 @@ Safe to defer:
   - Summary (follow-up): Added authenticated runtime API support for `GET /api/workspaces/:workspaceId/audit-events` with validated query filters and deterministic limit bounds, plus persistence/runtime regression coverage for filter behavior and invalid query handling.
   - Changed: `apps/web/src/index.ts`, `apps/web/src/persistence.ts`, `apps/web/test/timeline-persistence.test.ts`, `apps/web/test/runtime.test.ts`, `README.md`, `TODO.md`.
 
-- [ ] Persist selected project, section, and thread in URL/local state so refresh restores workspace context
+- [x] Persist selected project, section, and thread in URL/local state so refresh restores workspace context
   - Acceptance criteria: refresh restores the active project, selected workspace section, and open thread without manual reselection.
+  - Summary: Added workspace-shell context persistence that reads/writes selected project, section, and thread via URL query params plus local browser storage.
+  - Summary (follow-up): Startup now rehydrates the active view/project from persisted context before loading workspace data, then keeps URL/local state synced on project and section/thread changes.
+  - Changed: `apps/web/src/index.ts`, `apps/web/test/runtime.test.ts`, `README.md`, `TODO.md`.
 
 - [ ] Add query helpers for issue/task-centric run history so timeline and run drill-down share one contract
   - Acceptance criteria: timeline and run drill-down flows read issue/task-centric run history through one shared query contract.
