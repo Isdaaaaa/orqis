@@ -192,13 +192,6 @@ Safe to defer:
 - [ ] Add web-runtime API regression coverage for `GET/POST /api/workspaces/:workspaceId/messages` (validation errors, project/workspace conflict responses, and chronological payload ordering)
 - [ ] Harden web-runtime shutdown to close keep-alive connections promptly so `runtime.stop()` does not block for multi-second idle timeouts after request traffic
 
-Move to later phase:
-- [ ] Persist selected project, section, and thread in URL/local state so refresh restores workspace context
-- [ ] Add keyboard/a11y navigation coverage for project rail and workspace channel list (focus order, `aria-current`, and section/thread activation)
-- [ ] Add responsive sidebar-collapse behavior and regression coverage so the fixed composer does not obscure timeline content on narrow viewports
-- [ ] Add browser regression coverage for workspace-shell script initialization and quick-project popover visibility (prevent parse-time JS failures and clipped rail popover interactions)
-- [ ] Add query helpers for issue/task-centric run history so timeline and run drill-down share one contract (Phase 4 timeline/read-model hardening)
-
 ## Phase 3: Project Manager planning and task approvals
 
 - [ ] Implement Project Manager planner service (`goal -> plan -> task list`)
@@ -225,8 +218,23 @@ Move to later phase:
   - Acceptance criteria: key actions (task create/assign, approval, run status changes) are traceable in UI.
   - Acceptance criteria: timeline supports filtering by actor, entity, and run/task correlation.
 
+- [ ] Persist selected project, section, and thread in URL/local state so refresh restores workspace context
+  - Acceptance criteria: refresh restores the active project, selected workspace section, and open thread without manual reselection.
+
+- [ ] Add query helpers for issue/task-centric run history so timeline and run drill-down share one contract
+  - Acceptance criteria: timeline and run drill-down flows read issue/task-centric run history through one shared query contract.
+
 - [ ] Add browser e2e checks for bootstrap + project + workspace + approval happy path
   - Acceptance criteria: Playwright suite covers one full user journey and runs in CI.
+
+- [ ] Add keyboard/a11y navigation coverage for project rail and workspace channel list (focus order, `aria-current`, and section/thread activation)
+  - Acceptance criteria: keyboard navigation coverage verifies focus order, activation behavior, and `aria-current` state across the workspace shell navigation.
+
+- [ ] Add responsive sidebar-collapse behavior and regression coverage so the fixed composer does not obscure timeline content on narrow viewports
+  - Acceptance criteria: narrow viewport behavior collapses sidebars intentionally and keeps timeline content/composer interactions unobscured.
+
+- [ ] Add browser regression coverage for workspace-shell script initialization and quick-project popover visibility (prevent parse-time JS failures and clipped rail popover interactions)
+  - Acceptance criteria: browser regressions catch workspace-shell script initialization failures and quick-project popover visibility/clipping issues.
 
 ## Later: Parallel execution and repository workflows
 
