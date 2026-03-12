@@ -38,6 +38,8 @@ export class ProjectManagerPlannerValidationError extends Error {
   }
 }
 
+export const PROJECT_MANAGER_PLANNER_ROLE_KEY = "project_manager";
+
 const DEFAULT_PLAN_STEPS = [
   "Capture the requested outcome and keep the first run in planned state.",
   "Split the work into specialist-owned tasks using the saved role responsibilities.",
@@ -74,11 +76,7 @@ function normalizeRole(
 }
 
 function isProjectManagerRole(role: ProjectManagerPlannerRole): boolean {
-  const normalizedDisplayName = role.displayName.trim().toLowerCase();
-  return (
-    role.roleKey === "project_manager" ||
-    normalizedDisplayName === "project manager"
-  );
+  return role.roleKey === PROJECT_MANAGER_PLANNER_ROLE_KEY;
 }
 
 function isFrontendRole(role: ProjectManagerPlannerRole): boolean {
@@ -182,7 +180,7 @@ class DefaultProjectManagerPlannerService
 
     if (projectManagerRole === undefined) {
       throw new ProjectManagerPlannerValidationError(
-        'roles must include a "project_manager" role before planning can start.',
+        `roles must include the reserved "${PROJECT_MANAGER_PLANNER_ROLE_KEY}" role before planning can start.`,
       );
     }
 

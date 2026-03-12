@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import BetterSqlite3 from "better-sqlite3";
 import {
   createProjectManagerPlannerService,
+  PROJECT_MANAGER_PLANNER_ROLE_KEY,
   ProjectManagerPlannerValidationError,
 } from "@orqis/core";
 
@@ -1532,7 +1533,7 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
     const modelKeys = new Set(models.map((model) => model.modelKey));
     const seenRoleKeys = new Set<string>();
 
-    return agentRoles.map((agentRole, index) => {
+    const normalizedRoles = agentRoles.map((agentRole, index) => {
       const roleKey = normalizeRequiredString(
         agentRole.roleKey,
         `agentRoles[${index}].roleKey`,
@@ -1571,6 +1572,18 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
         responsibility,
       };
     });
+
+    if (
+      !normalizedRoles.some(
+        (agentRole) => agentRole.roleKey === PROJECT_MANAGER_PLANNER_ROLE_KEY,
+      )
+    ) {
+      throw new WorkspaceTimelineValidationError(
+        `agentRoles must include the reserved "${PROJECT_MANAGER_PLANNER_ROLE_KEY}" role key for planner compatibility.`,
+      );
+    }
+
+    return normalizedRoles;
   }
 }
 

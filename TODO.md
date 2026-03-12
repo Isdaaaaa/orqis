@@ -209,6 +209,11 @@ Safe to defer:
   - Summary (follow-up): Added focused regression coverage for provider-removal and model-removal draft flows through shared editor helpers.
   - Changed: `apps/web/src/agent-configuration-editor.ts`, `apps/web/src/index.ts`, `apps/web/test/agent-configuration-editor.test.ts`, `TODO.md`.
 
+- [x] Enforce planner-compatible agent-role configuration before save
+  - Summary: Made the reserved `project_manager` role key an explicit planner contract, rejected incompatible agent-role saves before they persist, and kept planner creation working after rejected invalid saves.
+  - Summary (follow-up): Added core, persistence, and runtime regression coverage for the reserved PM-role contract and the rejected-save path.
+  - Changed: `packages/core/src/project-manager-planner-service.ts`, `packages/core/test/project-manager-planner-service.test.ts`, `apps/web/src/persistence.ts`, `apps/web/test/timeline-persistence.test.ts`, `apps/web/test/runtime.test.ts`, `README.md`, `TODO.md`.
+
 - [x] Implement Project Manager planner service (`goal -> plan -> task list`)
   - Acceptance criteria: planner persists plan and emits visible plan message in workspace chat.
   - Summary: Added a deterministic Project Manager planner service that turns a goal plus saved agent roles into a first-pass plan summary and role-owned task drafts.

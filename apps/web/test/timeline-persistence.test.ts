@@ -6,7 +6,10 @@ import { join } from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 
-import { createWorkspaceTimelineStore } from "../src/persistence.ts";
+import {
+  createWorkspaceTimelineStore,
+  WorkspaceTimelineValidationError,
+} from "../src/persistence.ts";
 
 describe("@orqis/web workspace timeline persistence", () => {
   it(
@@ -260,6 +263,77 @@ describe("@orqis/web workspace timeline persistence", () => {
         });
       } finally {
         secondStore.close();
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+    75_000,
+  );
+
+  it(
+    "rejects agent-role configurations that remove the reserved project_manager role key",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "orqis-web-agent-config-pm-"));
+      const databaseFilePath = join(tempDir, "agent-config-pm.db");
+
+      const store = createWorkspaceTimelineStore({
+        databaseFilePath,
+      });
+
+      try {
+        expect(() =>
+          store.saveAgentConfiguration({
+            providers: [
+              {
+                providerKey: "openai",
+                displayName: "OpenAI",
+                baseUrl: "https://api.openai.com/v1",
+              },
+            ],
+            models: [
+              {
+                modelKey: "gpt-5",
+                providerKey: "openai",
+                displayName: "GPT-5",
+              },
+            ],
+            agentRoles: [
+              {
+                roleKey: "backend_agent",
+                displayName: "Backend Agent",
+                modelKey: "gpt-5",
+                responsibility: "Owns runtime behavior and persistence.",
+              },
+              {
+                roleKey: "reviewer",
+                displayName: "Reviewer",
+                modelKey: "gpt-5",
+                responsibility: "Finds regressions before release.",
+              },
+            ],
+          }),
+        ).toThrowError(
+          new WorkspaceTimelineValidationError(
+            'agentRoles must include the reserved "project_manager" role key for planner compatibility.',
+          ),
+        );
+
+        expect(
+          store.getAgentConfiguration().agentRoles.map((agentRole) => agentRole.roleKey),
+        ).toContain("project_manager");
+
+        const project = store.createProject({
+          name: "Planner Guard Project",
+        });
+        const plan = store.createProjectManagerPlan({
+          workspaceId: project.workspaceId,
+          projectId: project.projectId,
+          goal: "Ship the planner guard",
+          requestedByActorId: "owner",
+        });
+
+        expect(plan.projectManagerRoleKey).toBe("project_manager");
+      } finally {
+        store.close();
         await rm(tempDir, { recursive: true, force: true });
       }
     },

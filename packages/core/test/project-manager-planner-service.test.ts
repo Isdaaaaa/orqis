@@ -109,7 +109,7 @@ describe("project manager planner service", () => {
       }),
     ).toThrowError(
       new ProjectManagerPlannerValidationError(
-        'roles must include a "project_manager" role before planning can start.',
+        'roles must include the reserved "project_manager" role before planning can start.',
       ),
     );
 
@@ -127,6 +127,32 @@ describe("project manager planner service", () => {
     ).toThrowError(
       new ProjectManagerPlannerValidationError(
         "roles must include at least one specialist role in addition to the Project Manager.",
+      ),
+    );
+  });
+
+  it("requires the reserved project_manager role key instead of inferring PM from display name", () => {
+    const service = createProjectManagerPlannerService();
+
+    expect(() =>
+      service.planGoal({
+        goal: "Ship approvals",
+        roles: [
+          {
+            roleKey: "pm",
+            displayName: "Project Manager",
+            responsibility: "Plans work and coordinates approvals.",
+          },
+          {
+            roleKey: "backend_agent",
+            displayName: "Backend Agent",
+            responsibility: "Owns runtime behavior and persistence.",
+          },
+        ],
+      }),
+    ).toThrowError(
+      new ProjectManagerPlannerValidationError(
+        'roles must include the reserved "project_manager" role before planning can start.',
       ),
     );
   });

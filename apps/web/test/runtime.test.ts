@@ -450,6 +450,99 @@ describe("@orqis/web runtime", () => {
         expect(invalidConfigurationBody.error).toBe(
           "At least two agent role configurations are required.",
         );
+
+        const missingProjectManagerResponse = await fetch(configurationUrl, {
+          method: "PUT",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            providers: [
+              {
+                providerKey: "anthropic",
+                displayName: "Anthropic",
+                baseUrl: "https://api.anthropic.com/v1",
+              },
+            ],
+            models: [
+              {
+                modelKey: "claude-sonnet-4",
+                providerKey: "anthropic",
+                displayName: "Claude Sonnet 4",
+              },
+            ],
+            agentRoles: [
+              {
+                roleKey: "pm",
+                displayName: "Project Manager",
+                modelKey: "claude-sonnet-4",
+                responsibility: "Creates plans and coordinates approvals.",
+              },
+              {
+                roleKey: "backend_agent",
+                displayName: "Backend Agent",
+                modelKey: "claude-sonnet-4",
+                responsibility: "Owns runtime behavior and persistence changes.",
+              },
+            ],
+          }),
+        });
+        const missingProjectManagerBody =
+          (await missingProjectManagerResponse.json()) as { error?: string };
+
+        expect(missingProjectManagerResponse.status).toBe(400);
+        expectNoStoreCacheControl(missingProjectManagerResponse);
+        expect(missingProjectManagerBody.error).toBe(
+          'agentRoles must include the reserved "project_manager" role key for planner compatibility.',
+        );
+
+        const createProjectResponse = await fetch(`${runtime.baseUrl}/api/projects`, {
+          method: "POST",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            name: "Planner After Rejected Config",
+          }),
+        });
+        const createProjectBody = (await createProjectResponse.json()) as {
+          project?: {
+            projectId: string;
+            workspaceId: string;
+          };
+        };
+
+        expect(createProjectResponse.status).toBe(201);
+
+        const createdProject = createProjectBody.project;
+
+        if (createdProject === undefined) {
+          throw new Error("expected project details after rejected config save");
+        }
+
+        const createPlanResponse = await fetch(
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/planner/runs`,
+          {
+            method: "POST",
+            headers: withSessionCookie(sessionCookie, {
+              "content-type": "application/json",
+            }),
+            body: JSON.stringify({
+              projectId: createdProject.projectId,
+              goal: "Plan after rejected PM rename",
+            }),
+          },
+        );
+        const createPlanBody = (await createPlanResponse.json()) as {
+          plan?: {
+            projectManagerRoleKey?: string;
+          };
+          error?: string;
+        };
+
+        expect(createPlanResponse.status).toBe(201);
+        expectNoStoreCacheControl(createPlanResponse);
+        expect(createPlanBody.plan?.projectManagerRoleKey).toBe("project_manager");
       } finally {
         await runtime.stop();
         await cleanup();
