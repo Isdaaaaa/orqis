@@ -10,6 +10,7 @@ import {
   createWorkspaceTimelineStore,
   WorkspaceTimelineValidationError,
 } from "../src/persistence.ts";
+import { WORKSPACE_CI_INTEGRATION_TIMEOUT_MS } from "./integration-timeouts.ts";
 
 describe("@orqis/web workspace timeline persistence", () => {
   it(
@@ -79,7 +80,7 @@ describe("@orqis/web workspace timeline persistence", () => {
         await rm(tempDir, { recursive: true, force: true });
       }
     },
-    75_000,
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
   );
 
   it(
@@ -141,7 +142,7 @@ describe("@orqis/web workspace timeline persistence", () => {
         await rm(tempDir, { recursive: true, force: true });
       }
     },
-    75_000,
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
   );
 
   it(
@@ -266,7 +267,7 @@ describe("@orqis/web workspace timeline persistence", () => {
         await rm(tempDir, { recursive: true, force: true });
       }
     },
-    75_000,
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
   );
 
   it(
@@ -337,7 +338,7 @@ describe("@orqis/web workspace timeline persistence", () => {
         await rm(tempDir, { recursive: true, force: true });
       }
     },
-    75_000,
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
   );
 
   it(
@@ -477,7 +478,7 @@ describe("@orqis/web workspace timeline persistence", () => {
         await rm(tempDir, { recursive: true, force: true });
       }
     },
-    75_000,
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
   );
 
   it(
@@ -540,6 +541,6 @@ describe("@orqis/web workspace timeline persistence", () => {
         await rm(tempDir, { recursive: true, force: true });
       }
     },
-    75_000,
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
   );
 });

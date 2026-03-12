@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { startOrqisWebRuntime } from "../src/index.ts";
+import { WORKSPACE_CI_INTEGRATION_TIMEOUT_MS } from "./integration-timeouts.ts";
 
 async function createRuntimeDatabaseFilePath(): Promise<{
   readonly databaseFilePath: string;
@@ -205,7 +206,7 @@ describe("@orqis/web runtime", () => {
         await cleanup();
       }
     },
-    75_000,
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
   );
 
   it(
@@ -302,7 +303,7 @@ describe("@orqis/web runtime", () => {
         await cleanup();
       }
     },
-    75_000,
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
   );
 
   it(
@@ -548,7 +549,7 @@ describe("@orqis/web runtime", () => {
         await cleanup();
       }
     },
-    75_000,
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
   );
 
   it(
@@ -679,7 +680,7 @@ describe("@orqis/web runtime", () => {
         await cleanup();
       }
     },
-    75_000,
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
   );
 
   it(
@@ -726,7 +727,7 @@ describe("@orqis/web runtime", () => {
         await cleanup();
       }
     },
-    75_000,
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
   );
 
   it(
@@ -906,7 +907,7 @@ describe("@orqis/web runtime", () => {
         await cleanup();
       }
     },
-    75_000,
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
   );
 
   it(
@@ -936,6 +937,6 @@ describe("@orqis/web runtime", () => {
         await cleanup();
       }
     },
-    75_000,
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
   );
 });

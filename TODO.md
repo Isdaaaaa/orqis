@@ -219,6 +219,10 @@ Safe to defer:
   - Summary (follow-up): Kept the bootstrap config-generation and CLI URL/status output-contract assertions intact while leaving real web-runtime coverage in the `@orqis/web` suite and the dedicated CLI runtime tests.
   - Changed: `apps/cli/test/init.test.ts`, `TODO.md`.
 
+- [x] Widen the long-running web integration test timeout budget so workspace smoke CI does not fail passing assertions
+  - Summary: Replaced the repeated 75-second timeout budget in the web runtime and persistence integration suites with one shared 180-second CI timeout after reproducing timeout failures in `pnpm -r test`.
+  - Changed: `apps/web/test/integration-timeouts.ts`, `apps/web/test/persistence-audit.test.ts`, `apps/web/test/runtime.test.ts`, `apps/web/test/timeline-persistence.test.ts`, `TODO.md`.
+
 - [x] Implement Project Manager planner service (`goal -> plan -> task list`)
   - Acceptance criteria: planner persists plan and emits visible plan message in workspace chat.
   - Summary: Added a deterministic Project Manager planner service that turns a goal plus saved agent roles into a first-pass plan summary and role-owned task drafts.
