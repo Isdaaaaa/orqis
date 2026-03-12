@@ -11,11 +11,14 @@ import {
   ApprovalGuardedTransitionConflictError,
   ApprovalGuardedTransitionNotFoundError,
   ApprovalGuardedTransitionValidationError,
+  canTransitionRunLifecycle,
   createProjectManagerPlannerService,
   createTaskClaimService,
+  getAllowedRunLifecycleTransitions,
   PROJECT_MANAGER_PLANNER_ROLE_KEY,
   ProjectManagerPlannerValidationError,
   TASK_CLAIM_OWNER_TYPES,
+  type RunLifecycleStatus,
   type TaskClaimConflictCode,
   type TaskClaimOwnerType,
   type TaskClaimRecord,
@@ -508,7 +511,7 @@ interface WorkspaceTaskApprovalRow {
 
 interface WorkspaceRunStatusRow {
   readonly id: string;
-  readonly status: "planned" | "running" | "waiting_approval" | "done" | "failed";
+  readonly status: RunLifecycleStatus;
 }
 
 interface SchemaMigrationRow {
@@ -836,6 +839,20 @@ function createProjectManagerDecisionMessageContent(input: {
   }
 
   return `Project Manager received a rejection for "${input.task.title}" and should replan or replace the task.`;
+}
+
+function createRunTransitionConflictMessage(input: {
+  readonly runId: string;
+  readonly from: RunLifecycleStatus;
+  readonly to: RunLifecycleStatus;
+}): string {
+  const allowedTargets = getAllowedRunLifecycleTransitions(input.from);
+  const allowedList =
+    allowedTargets.length > 0
+      ? allowedTargets.join(", ")
+      : "(terminal state with no outgoing transitions)";
+
+  return `Run "${input.runId}" cannot transition from status "${input.from}" to "${input.to}". Allowed targets from "${input.from}": ${allowedList}.`;
 }
 
 function mapSqliteError(error: unknown): WorkspaceTimelineError {
@@ -1449,8 +1466,12 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
 
     const task = this.requireWorkspaceTask(taskId, workspaceId);
     this.assertAgentClaimMatchesAssignment(task, ownerType, ownerId);
+    let transactionStarted = false;
 
     try {
+      this.database.exec("BEGIN IMMEDIATE");
+      transactionStarted = true;
+
       await this.createTaskClaimServiceForAuditContext({
         actorType:
           ownerType === "user" ? "user" : ownerType === "agent" ? "agent" : "system",
@@ -1464,8 +1485,18 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
         claimedAt,
       });
 
-      return this.requireWorkspaceTask(taskId, workspaceId);
+      this.markRunRunningAfterClaim(runId);
+      const claimedTask = this.requireWorkspaceTask(taskId, workspaceId);
+
+      this.database.exec("COMMIT");
+      transactionStarted = false;
+
+      return claimedTask;
     } catch (error) {
+      if (transactionStarted) {
+        this.database.exec("ROLLBACK");
+      }
+
       if (error instanceof TaskClaimValidationError) {
         throw new WorkspaceTimelineValidationError(error.message);
       }
@@ -1798,11 +1829,15 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
         : this.getRunStatusRecord(correlationRunId);
 
       if (runStatus?.status === "waiting_approval") {
+        const targetRunStatus = this.resolveRunStatusAfterApprovalDecision(
+          runStatus.id,
+        );
+
         try {
           await transitionService.transitionRun({
             runId: runStatus.id,
             from: "waiting_approval",
-            to: "running",
+            to: targetRunStatus,
           });
         } catch (error) {
           if (!(error instanceof ApprovalGuardedTransitionBlockedError)) {
@@ -2417,6 +2452,16 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
       .get(runId) as WorkspaceRunStatusRow | undefined;
   }
 
+  private requireRunStatusRecord(runId: string): WorkspaceRunStatusRow {
+    const runStatus = this.getRunStatusRecord(runId);
+
+    if (runStatus === undefined) {
+      throw new WorkspaceTimelineNotFoundError(`Run "${runId}" was not found.`);
+    }
+
+    return runStatus;
+  }
+
   private assertTaskOutputSubmissionAllowed(
     task: WorkspaceTaskRecord,
     input: {
@@ -2475,20 +2520,60 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
     }
   }
 
-  private markRunWaitingApproval(runId: string, updatedAt: string): void {
-    const current = this.getRunStatusRecord(runId);
+  private markRunRunningAfterClaim(runId: string): void {
+    const current = this.requireRunStatusRecord(runId);
 
-    if (current === undefined) {
-      throw new WorkspaceTimelineNotFoundError(`Run "${runId}" was not found.`);
+    if (current.status === "running") {
+      return;
     }
+
+    if (current.status !== "planned") {
+      throw new WorkspaceTimelineConflictError(
+        createRunTransitionConflictMessage({
+          runId,
+          from: current.status,
+          to: "running",
+        }),
+      );
+    }
+
+    const updatedAt = new Date().toISOString();
+    const result = this.database
+      .prepare(
+        [
+          "UPDATE runs",
+          "SET",
+          "  status = ?,",
+          "  started_at = COALESCE(started_at, ?),",
+          "  ended_at = NULL,",
+          "  updated_at = ?",
+          "WHERE id = ?",
+          "  AND status = ?",
+        ].join("\n"),
+      )
+      .run("running", updatedAt, updatedAt, runId, "planned");
+
+    if (result.changes === 0) {
+      throw new WorkspaceTimelineConflictError(
+        `Run "${runId}" changed before it could enter running.`,
+      );
+    }
+  }
+
+  private markRunWaitingApproval(runId: string, updatedAt: string): void {
+    const current = this.requireRunStatusRecord(runId);
 
     if (current.status === "waiting_approval") {
       return;
     }
 
-    if (current.status !== "planned" && current.status !== "running") {
+    if (!canTransitionRunLifecycle(current.status, "waiting_approval")) {
       throw new WorkspaceTimelineConflictError(
-        `Run "${runId}" cannot enter waiting_approval from status "${current.status}".`,
+        createRunTransitionConflictMessage({
+          runId,
+          from: current.status,
+          to: "waiting_approval",
+        }),
       );
     }
 
@@ -2498,18 +2583,49 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
           "UPDATE runs",
           "SET",
           "  status = ?,",
+          "  started_at = COALESCE(started_at, ?),",
+          "  ended_at = NULL,",
           "  updated_at = ?",
           "WHERE id = ?",
           "  AND status = ?",
         ].join("\n"),
       )
-      .run("waiting_approval", updatedAt, runId, current.status);
+      .run("waiting_approval", updatedAt, updatedAt, runId, current.status);
 
     if (result.changes === 0) {
       throw new WorkspaceTimelineConflictError(
         `Run "${runId}" changed before it could enter waiting_approval.`,
       );
     }
+  }
+
+  private resolveRunStatusAfterApprovalDecision(
+    runId: string,
+  ): WorkspaceRunStatusRow["status"] {
+    const row = this.database
+      .prepare(
+        [
+          "SELECT",
+          "  COALESCE(SUM(CASE WHEN state IN ('blocked', 'failed') THEN 1 ELSE 0 END), 0) AS blockedOrFailedCount,",
+          "  COALESCE(SUM(CASE WHEN state <> 'done' THEN 1 ELSE 0 END), 0) AS notDoneCount",
+          "FROM tasks",
+          "WHERE run_id = ?",
+        ].join("\n"),
+      )
+      .get(runId) as {
+      blockedOrFailedCount: number;
+      notDoneCount: number;
+    };
+
+    if (row.blockedOrFailedCount > 0) {
+      return "failed";
+    }
+
+    if (row.notDoneCount === 0) {
+      return "done";
+    }
+
+    return "running";
   }
 
   private insertTimelineMessage(input: {
@@ -2674,12 +2790,20 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
           "UPDATE runs",
           "SET",
           "  status = ?,",
+          "  started_at = CASE",
+          "    WHEN ? = 'running' THEN COALESCE(started_at, ?)",
+          "    ELSE started_at",
+          "  END,",
+          "  ended_at = CASE",
+          "    WHEN ? IN ('done', 'failed') THEN ?",
+          "    ELSE NULL",
+          "  END,",
           "  updated_at = ?",
           "WHERE id = ?",
           "  AND status = ?",
         ].join("\n"),
       )
-      .run(next, updatedAt, runId, expected);
+      .run(next, next, updatedAt, next, updatedAt, updatedAt, runId, expected);
 
     return result.changes > 0;
   }

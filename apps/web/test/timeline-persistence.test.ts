@@ -24,6 +24,12 @@ interface RunStatusRow {
   readonly status: string;
 }
 
+interface RunLifecycleDetailsRow {
+  readonly status: string;
+  readonly startedAt: string | null;
+  readonly endedAt: string | null;
+}
+
 function readApprovalAuditEvents(
   database: BetterSqlite3.Database,
   approvalId: string,
@@ -60,6 +66,27 @@ function readRunStatus(
     .get(runId) as RunStatusRow | undefined;
 
   return row?.status ?? null;
+}
+
+function readRunLifecycleDetails(
+  database: BetterSqlite3.Database,
+  runId: string,
+): RunLifecycleDetailsRow | null {
+  const row = database
+    .prepare(
+      [
+        "SELECT",
+        "  status,",
+        "  started_at AS startedAt,",
+        "  ended_at AS endedAt",
+        "FROM runs",
+        "WHERE id = ?",
+        "LIMIT 1",
+      ].join("\n"),
+    )
+    .get(runId) as RunLifecycleDetailsRow | undefined;
+
+  return row ?? null;
 }
 
 describe("@orqis/web workspace timeline persistence", () => {
@@ -640,6 +667,16 @@ describe("@orqis/web workspace timeline persistence", () => {
           executionRunId: plan.runId,
         });
 
+        const claimAuditDatabase = new BetterSqlite3(databaseFilePath, {
+          readonly: true,
+        });
+
+        try {
+          expect(readRunStatus(claimAuditDatabase, plan.runId)).toBe("running");
+        } finally {
+          claimAuditDatabase.close();
+        }
+
         await expect(
           store.claimTaskExecution({
             workspaceId: project.workspaceId,
@@ -953,6 +990,221 @@ describe("@orqis/web workspace timeline persistence", () => {
           },
         ]);
         expect(readRunStatus(auditDatabase, runId)).toBe("running");
+      } finally {
+        auditDatabase.close();
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
+  );
+
+  it(
+    "marks a run done when all run tasks are approved",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "orqis-web-run-done-"));
+      const databaseFilePath = join(tempDir, "run-done.db");
+      const store = createWorkspaceTimelineStore({
+        databaseFilePath,
+      });
+
+      let runId = "";
+
+      try {
+        store.saveAgentConfiguration({
+          providers: [
+            {
+              providerKey: "openai",
+              displayName: "OpenAI",
+              baseUrl: "https://api.openai.com/v1",
+            },
+          ],
+          models: [
+            {
+              modelKey: "gpt-5",
+              providerKey: "openai",
+              displayName: "GPT-5",
+            },
+          ],
+          agentRoles: [
+            {
+              roleKey: "project_manager",
+              displayName: "Project Manager",
+              modelKey: "gpt-5",
+              responsibility: "Owns plan creation and approvals.",
+            },
+            {
+              roleKey: "backend_agent",
+              displayName: "Backend Agent",
+              modelKey: "gpt-5",
+              responsibility: "Owns runtime behavior.",
+            },
+          ],
+        });
+
+        const project = store.createProject({
+          name: "Run Done Project",
+        });
+        const plan = store.createProjectManagerPlan({
+          workspaceId: project.workspaceId,
+          projectId: project.projectId,
+          goal: "Close the first lifecycle run",
+          requestedByActorId: "owner",
+        });
+        const task = plan.tasks[0];
+
+        if (task === undefined) {
+          throw new Error("expected one planned task for run completion assertions");
+        }
+
+        runId = plan.runId;
+
+        await store.claimTaskExecution({
+          workspaceId: project.workspaceId,
+          taskId: task.id,
+          runId,
+          ownerType: "agent",
+          ownerId: "backend_agent",
+        });
+
+        await store.submitTaskOutput({
+          workspaceId: project.workspaceId,
+          taskId: task.id,
+          runId,
+          ownerType: "agent",
+          ownerId: "backend_agent",
+          output: "Delivered the run completion slice.",
+        });
+
+        const approved = await store.decideTaskApproval({
+          workspaceId: project.workspaceId,
+          taskId: task.id,
+          decision: "approved",
+          decidedByActorId: "owner",
+        });
+
+        expect(approved.task.state).toBe("done");
+      } finally {
+        store.close();
+      }
+
+      const auditDatabase = new BetterSqlite3(databaseFilePath, {
+        readonly: true,
+      });
+
+      try {
+        expect(readRunLifecycleDetails(auditDatabase, runId)).toMatchObject({
+          status: "done",
+          startedAt: expect.any(String),
+          endedAt: expect.any(String),
+        });
+      } finally {
+        auditDatabase.close();
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
+  );
+
+  it(
+    "marks a run failed when a task approval decision is rejected",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "orqis-web-run-failed-"));
+      const databaseFilePath = join(tempDir, "run-failed.db");
+      const store = createWorkspaceTimelineStore({
+        databaseFilePath,
+      });
+
+      let runId = "";
+
+      try {
+        store.saveAgentConfiguration({
+          providers: [
+            {
+              providerKey: "openai",
+              displayName: "OpenAI",
+              baseUrl: "https://api.openai.com/v1",
+            },
+          ],
+          models: [
+            {
+              modelKey: "gpt-5",
+              providerKey: "openai",
+              displayName: "GPT-5",
+            },
+          ],
+          agentRoles: [
+            {
+              roleKey: "project_manager",
+              displayName: "Project Manager",
+              modelKey: "gpt-5",
+              responsibility: "Owns plan creation and approvals.",
+            },
+            {
+              roleKey: "backend_agent",
+              displayName: "Backend Agent",
+              modelKey: "gpt-5",
+              responsibility: "Owns runtime behavior.",
+            },
+          ],
+        });
+
+        const project = store.createProject({
+          name: "Run Failed Project",
+        });
+        const plan = store.createProjectManagerPlan({
+          workspaceId: project.workspaceId,
+          projectId: project.projectId,
+          goal: "Exercise the failure lifecycle path",
+          requestedByActorId: "owner",
+        });
+        const task = plan.tasks[0];
+
+        if (task === undefined) {
+          throw new Error("expected one planned task for run failure assertions");
+        }
+
+        runId = plan.runId;
+
+        await store.claimTaskExecution({
+          workspaceId: project.workspaceId,
+          taskId: task.id,
+          runId,
+          ownerType: "agent",
+          ownerId: "backend_agent",
+        });
+
+        await store.submitTaskOutput({
+          workspaceId: project.workspaceId,
+          taskId: task.id,
+          runId,
+          ownerType: "agent",
+          ownerId: "backend_agent",
+          output: "Delivered a version that should be rejected.",
+        });
+
+        const rejected = await store.decideTaskApproval({
+          workspaceId: project.workspaceId,
+          taskId: task.id,
+          decision: "rejected",
+          decisionSummary: "The result is not acceptable.",
+          decidedByActorId: "owner",
+        });
+
+        expect(rejected.task.state).toBe("blocked");
+      } finally {
+        store.close();
+      }
+
+      const auditDatabase = new BetterSqlite3(databaseFilePath, {
+        readonly: true,
+      });
+
+      try {
+        expect(readRunLifecycleDetails(auditDatabase, runId)).toMatchObject({
+          status: "failed",
+          startedAt: expect.any(String),
+          endedAt: expect.any(String),
+        });
       } finally {
         auditDatabase.close();
         await rm(tempDir, { recursive: true, force: true });
