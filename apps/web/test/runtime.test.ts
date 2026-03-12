@@ -192,6 +192,9 @@ describe("@orqis/web runtime", () => {
         expect(firstLandingPage).toContain("PM -> Backend Agent");
         expect(firstLandingPage).toContain("PM -> Reviewer");
         expect(firstLandingPage).toContain("Assigned Agents");
+        expect(firstLandingPage).toContain("Task Approval Loop");
+        expect(firstLandingPage).toContain("Submit output");
+        expect(firstLandingPage).toContain("Apply decision");
         expect(firstLandingPage).toContain("Log out");
         expectNoStoreCacheControl(firstLandingResponse);
 

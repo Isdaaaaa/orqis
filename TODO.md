@@ -261,7 +261,11 @@ Safe to defer:
 #### Hardening before Phase 4
 
 Must finish before Phase 4:
-- [ ] Expose the task output approval loop in the workspace shell so users can submit outputs and approve/reject them without calling runtime APIs directly
+- [x] Expose the task output approval loop in the workspace shell so users can submit outputs and approve/reject them without calling runtime APIs directly
+  - Summary: Added a Main Chat `Task Approval Loop` shell panel that loads workspace tasks, captures run/owner/output payloads, and submits outputs through the authenticated runtime task-output API.
+  - Summary (follow-up): Added in-shell decision controls for `approved`, `revision_requested`, and `rejected` actions with required summary enforcement for revision/rejection before posting approval decisions.
+  - Summary (follow-up): Added runtime shell coverage that asserts authenticated landing HTML now includes task-loop controls so the approval workflow is exposed in the workspace UI contract.
+  - Changed: `apps/web/src/index.ts`, `apps/web/test/runtime.test.ts`, `README.md`, `TODO.md`.
 
 Safe to defer:
 - [ ] Add runtime regression coverage for the `decision: "rejected"` approval path (including task/run state effects and PM-visible timeline messaging) now that persistence coverage exists
