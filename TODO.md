@@ -264,6 +264,7 @@ Unclassified:
 - [ ] Align workspace agent-thread navigation with saved role mappings so customized planner owner roles have matching visible thread labels and navigation entries
 - [ ] Expose the task output approval loop in the workspace shell so users can submit outputs and approve/reject them without calling runtime APIs directly
 - [ ] Add runtime regression coverage for the `decision: "rejected"` approval path (including task/run state effects and PM-visible timeline messaging) now that persistence coverage exists
+- [ ] Add runtime/persistence regression coverage for multi-approval sequencing (for example one task `revision_requested` while another run-linked approval remains unresolved) so waiting_approval gating and follow-up claim behavior stay intentional and stable
 
 ## Phase 4: Workflow hardening and integration
 
