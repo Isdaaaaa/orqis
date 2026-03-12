@@ -2565,6 +2565,22 @@ function isTaskExecutionOwnerType(
   return (TASK_EXECUTION_OWNER_TYPES as readonly string[]).includes(value);
 }
 
+function validateTaskExecutionOwnerIdentity(input: {
+  readonly runId: string;
+  readonly ownerType: TaskExecutionClaimBody["ownerType"];
+  readonly ownerId?: string;
+}): string | undefined {
+  if (
+    input.ownerType === "run" &&
+    input.ownerId !== undefined &&
+    input.ownerId !== input.runId
+  ) {
+    return "ownerId must equal runId when ownerType is run.";
+  }
+
+  return undefined;
+}
+
 function parsePostWorkspaceMessageBody(
   body: unknown,
 ): { ok: true; value: PostWorkspaceMessageBody } | { ok: false; error: string } {
@@ -2683,6 +2699,19 @@ function parseTaskExecutionClaimBody(
     };
   }
 
+  const ownerIdentityError = validateTaskExecutionOwnerIdentity({
+    runId,
+    ownerType,
+    ownerId,
+  });
+
+  if (ownerIdentityError !== undefined) {
+    return {
+      ok: false,
+      error: ownerIdentityError,
+    };
+  }
+
   return {
     ok: true,
     value: {
@@ -2728,6 +2757,19 @@ function parseTaskExecutionReleaseBody(
     return {
       ok: false,
       error: "ownerId must be a non-empty string when ownerType is agent.",
+    };
+  }
+
+  const ownerIdentityError = validateTaskExecutionOwnerIdentity({
+    runId,
+    ownerType,
+    ownerId,
+  });
+
+  if (ownerIdentityError !== undefined) {
+    return {
+      ok: false,
+      error: ownerIdentityError,
     };
   }
 

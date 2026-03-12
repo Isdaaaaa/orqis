@@ -574,6 +574,18 @@ function isTaskClaimOwnerType(value: string): value is TaskClaimOwnerType {
   return (TASK_CLAIM_OWNER_TYPES as readonly string[]).includes(value);
 }
 
+function assertTaskExecutionOwnerIdentity(input: {
+  readonly runId: string;
+  readonly ownerType: TaskClaimOwnerType;
+  readonly ownerId: string;
+}): void {
+  if (input.ownerType === "run" && input.ownerId !== input.runId) {
+    throw new WorkspaceTimelineValidationError(
+      "ownerId must equal runId when ownerType is run.",
+    );
+  }
+}
+
 function mapWorkspaceTaskRow(row: WorkspaceTaskRow): WorkspaceTaskRecord {
   const assignment =
     row.assignmentId === null ||
@@ -1227,6 +1239,12 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
       );
     }
 
+    assertTaskExecutionOwnerIdentity({
+      runId,
+      ownerType,
+      ownerId,
+    });
+
     const task = this.requireWorkspaceTask(taskId, workspaceId);
     this.assertAgentClaimMatchesAssignment(task, ownerType, ownerId);
 
@@ -1276,6 +1294,12 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
         `ownerType must be one of: ${TASK_CLAIM_OWNER_TYPES.join(", ")}.`,
       );
     }
+
+    assertTaskExecutionOwnerIdentity({
+      runId,
+      ownerType,
+      ownerId,
+    });
 
     this.requireWorkspaceTask(taskId, workspaceId);
 

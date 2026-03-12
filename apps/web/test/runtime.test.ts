@@ -776,6 +776,9 @@ describe("@orqis/web runtime", () => {
         const backendTask = tasksBody.tasks?.find(
           (task) => task.ownerRole === "backend_agent",
         );
+        const reviewerTask = tasksBody.tasks?.find(
+          (task) => task.ownerRole === "reviewer",
+        );
 
         expect(backendTask?.assignment).toMatchObject({
           roleKey: "backend_agent",
@@ -789,8 +792,18 @@ describe("@orqis/web runtime", () => {
           throw new Error("expected backend task id for checkout assertions");
         }
 
+        const reviewerTaskId = reviewerTask?.id;
+
+        if (reviewerTaskId === undefined) {
+          throw new Error("expected reviewer task id for run-owner assertions");
+        }
+
         const checkoutUrl =
           `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/tasks/${encodeURIComponent(backendTaskId)}/checkout`;
+        const reviewerCheckoutUrl =
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/tasks/${encodeURIComponent(reviewerTaskId)}/checkout`;
+        const reviewerReleaseUrl =
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/tasks/${encodeURIComponent(reviewerTaskId)}/release`;
 
         const checkoutResponse = await fetch(checkoutUrl, {
           method: "POST",
@@ -870,6 +883,100 @@ describe("@orqis/web runtime", () => {
           code: "task_execution_locked",
           currentExecutionRunId: planRunId,
           currentCheckoutRunId: planRunId,
+        });
+
+        const mismatchedRunCheckoutResponse = await fetch(reviewerCheckoutUrl, {
+          method: "POST",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            runId: planRunId,
+            ownerType: "run",
+            ownerId: "run-other",
+          }),
+        });
+        const mismatchedRunCheckoutBody =
+          (await mismatchedRunCheckoutResponse.json()) as {
+            error?: string;
+          };
+
+        expect(mismatchedRunCheckoutResponse.status).toBe(400);
+        expectNoStoreCacheControl(mismatchedRunCheckoutResponse);
+        expect(mismatchedRunCheckoutBody.error).toBe(
+          "ownerId must equal runId when ownerType is run.",
+        );
+
+        const runCheckoutResponse = await fetch(reviewerCheckoutUrl, {
+          method: "POST",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            runId: planRunId,
+            ownerType: "run",
+          }),
+        });
+        const runCheckoutBody = (await runCheckoutResponse.json()) as {
+          task?: {
+            lockOwnerType?: string | null;
+            lockOwnerId?: string | null;
+            executionRunId?: string | null;
+          };
+        };
+
+        expect(runCheckoutResponse.status).toBe(200);
+        expectNoStoreCacheControl(runCheckoutResponse);
+        expect(runCheckoutBody.task).toMatchObject({
+          lockOwnerType: "run",
+          lockOwnerId: planRunId,
+          executionRunId: planRunId,
+        });
+
+        const mismatchedRunReleaseResponse = await fetch(reviewerReleaseUrl, {
+          method: "POST",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            runId: planRunId,
+            ownerType: "run",
+            ownerId: "run-other",
+          }),
+        });
+        const mismatchedRunReleaseBody =
+          (await mismatchedRunReleaseResponse.json()) as {
+            error?: string;
+          };
+
+        expect(mismatchedRunReleaseResponse.status).toBe(400);
+        expectNoStoreCacheControl(mismatchedRunReleaseResponse);
+        expect(mismatchedRunReleaseBody.error).toBe(
+          "ownerId must equal runId when ownerType is run.",
+        );
+
+        const runReleaseResponse = await fetch(reviewerReleaseUrl, {
+          method: "POST",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            runId: planRunId,
+            ownerType: "run",
+          }),
+        });
+        const runReleaseBody = (await runReleaseResponse.json()) as {
+          task?: {
+            lockOwnerId?: string | null;
+            executionRunId?: string | null;
+          };
+        };
+
+        expect(runReleaseResponse.status).toBe(200);
+        expectNoStoreCacheControl(runReleaseResponse);
+        expect(runReleaseBody.task).toMatchObject({
+          lockOwnerId: planRunId,
+          executionRunId: null,
         });
 
         const releaseResponse = await fetch(

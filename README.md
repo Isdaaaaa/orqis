@@ -91,7 +91,7 @@ Current runtime behavior:
 - Provider/model/role settings are seeded with durable defaults on first run, survive restarts, and must retain the reserved `project_manager` role key so PM planning stays valid.
 - Main Chat now exposes a `Create plan` action backed by `POST /api/workspaces/:workspaceId/planner/runs`, which stores the user goal, a PM planning run, role-owned task records, matching `task_assignments` role snapshots, and the visible PM plan message together.
 - The web runtime now serves task APIs at `GET /api/workspaces/:workspaceId/tasks`, returning persisted task state, role-mapped assignment snapshots, and current checkout/execution lock metadata for the workspace.
-- Authenticated task checkout/release flows are available at `POST /api/workspaces/:workspaceId/tasks/:taskId/checkout` and `POST /api/workspaces/:workspaceId/tasks/:taskId/release`, enforcing assigned-role claims and returning deterministic conflict codes for competing ownership attempts.
+- Authenticated task checkout/release flows are available at `POST /api/workspaces/:workspaceId/tasks/:taskId/checkout` and `POST /api/workspaces/:workspaceId/tasks/:taskId/release`, enforcing assigned-role claims, coupling `ownerType: "run"` to the submitted `runId`, and returning deterministic conflict codes for competing ownership attempts.
 - The web runtime now serves project APIs at `GET/POST /api/projects`, creating one persistent workspace mapping per project.
 - The landing UI supports project creation, project selection, and timeline loading for the selected project's workspace.
 - The web runtime now persists workspace timeline messages in SQLite (`orqis.db`) and serves timeline APIs at `GET/POST /api/workspaces/:workspaceId/messages`.

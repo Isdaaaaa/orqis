@@ -237,6 +237,11 @@ Safe to defer:
   - Summary (follow-up): Wired task checkout/release through the shared core claim service so assigned-role mismatches and competing run claims fail with deterministic conflict codes.
   - Changed: `packages/db/migrations/0003_task_assignments.sql`, `packages/db/src/migrations.ts`, `packages/db/src/schema.ts`, `packages/db/test/migrations.test.ts`, `apps/web/src/persistence.ts`, `apps/web/src/index.ts`, `apps/web/test/timeline-persistence.test.ts`, `apps/web/test/runtime.test.ts`, `TODO.md`, `README.md`.
 
+- [x] Keep run-owned task claims coupled to the submitted run identity
+  - Summary: Rejected checkout/release payloads whose `ownerType: "run"` `ownerId` diverges from the submitted `runId`, so impossible run locks cannot persist after checkout.
+  - Summary (follow-up): Added focused core, persistence, and authenticated runtime regressions for mismatched run-owner claim/release payloads.
+  - Changed: `packages/core/src/task-claim-service.ts`, `packages/core/test/task-claim-service.test.ts`, `apps/web/src/index.ts`, `apps/web/src/persistence.ts`, `apps/web/test/timeline-persistence.test.ts`, `apps/web/test/runtime.test.ts`, `README.md`, `TODO.md`.
+
 - [ ] Implement user approval/reject loop for task outputs
   - Acceptance criteria: user action updates approval status, audit event is written, and PM receives the decision.
   - Acceptance criteria: flow supports revision request and agent resubmission without losing prior decision history.

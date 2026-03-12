@@ -187,6 +187,24 @@ describe("task claim service", () => {
     );
   });
 
+  it("rejects run-owned claims whose ownerId does not match the runId", async () => {
+    const repository = new InMemoryTaskClaimRepository([createTask()]);
+    const service = createTaskClaimService(repository);
+
+    await expect(
+      service.claimTaskExecution({
+        taskId: "task_1",
+        runId: "run_1",
+        ownerType: "run",
+        ownerId: "run_2",
+      }),
+    ).rejects.toEqual(
+      new TaskClaimValidationError(
+        "ownerId must equal runId when ownerType is run.",
+      ),
+    );
+  });
+
   it("returns a deterministic execution-lock conflict when another run is active", async () => {
     const repository = new InMemoryTaskClaimRepository([
       createTask({
@@ -364,6 +382,33 @@ describe("task claim service", () => {
         checkoutRunId: "run_1",
         executionRunId: null,
       }),
+    );
+  });
+
+  it("rejects run-owned releases whose ownerId does not match the runId", async () => {
+    const repository = new InMemoryTaskClaimRepository([
+      createTask({
+        state: "in_progress",
+        lockOwnerType: "run",
+        lockOwnerId: "run_1",
+        lockAcquiredAt: "2026-03-11T01:02:03.000Z",
+        checkoutRunId: "run_1",
+        executionRunId: "run_1",
+      }),
+    ]);
+    const service = createTaskClaimService(repository);
+
+    await expect(
+      service.releaseTaskExecution({
+        taskId: "task_1",
+        runId: "run_1",
+        ownerType: "run",
+        ownerId: "run_2",
+      }),
+    ).rejects.toEqual(
+      new TaskClaimValidationError(
+        "ownerId must equal runId when ownerType is run.",
+      ),
     );
   });
 });

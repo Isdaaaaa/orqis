@@ -647,6 +647,78 @@ describe("@orqis/web workspace timeline persistence", () => {
   );
 
   it(
+    "rejects run-owned claim and release payloads when ownerId diverges from runId",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "orqis-web-run-owner-"));
+      const databaseFilePath = join(tempDir, "run-owner.db");
+      const store = createWorkspaceTimelineStore({
+        databaseFilePath,
+      });
+
+      try {
+        const project = store.createProject({
+          name: "Run Owner Validation Project",
+        });
+        const plan = store.createProjectManagerPlan({
+          workspaceId: project.workspaceId,
+          projectId: project.projectId,
+          goal: "Validate run-owned task claims",
+          requestedByActorId: "owner",
+        });
+        const task = plan.tasks[0];
+
+        if (task === undefined) {
+          throw new Error("expected task for run-owner validation assertions");
+        }
+
+        await expect(
+          store.claimTaskExecution({
+            workspaceId: project.workspaceId,
+            taskId: task.id,
+            runId: plan.runId,
+            ownerType: "run",
+            ownerId: "run-other",
+          }),
+        ).rejects.toMatchObject({
+          message: "ownerId must equal runId when ownerType is run.",
+        });
+
+        const claimedTask = await store.claimTaskExecution({
+          workspaceId: project.workspaceId,
+          taskId: task.id,
+          runId: plan.runId,
+          ownerType: "run",
+          ownerId: plan.runId,
+        });
+
+        expect(claimedTask).toMatchObject({
+          id: task.id,
+          lockOwnerType: "run",
+          lockOwnerId: plan.runId,
+          checkoutRunId: plan.runId,
+          executionRunId: plan.runId,
+        });
+
+        await expect(
+          store.releaseTaskExecution({
+            workspaceId: project.workspaceId,
+            taskId: task.id,
+            runId: plan.runId,
+            ownerType: "run",
+            ownerId: "run-other",
+          }),
+        ).rejects.toMatchObject({
+          message: "ownerId must equal runId when ownerType is run.",
+        });
+      } finally {
+        store.close();
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
+  );
+
+  it(
     "upgrades legacy phase 2 databases without a migration ledger and seeds agent configuration defaults",
     async () => {
       const tempDir = await mkdtemp(join(tmpdir(), "orqis-web-agent-legacy-"));
