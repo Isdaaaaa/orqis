@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Continue Phase 3 with the Project Manager planner service now that provider/model/agent-role settings persist across restarts and can be consumed by later workflow slices.
+Continue Phase 3 with task assignment records and specialist role mapping now that Project Manager planning runs, task lists, and visible plan messages persist in workspace state.
 
 ## Completed
 
@@ -209,8 +209,26 @@ Safe to defer:
   - Summary (follow-up): Added focused regression coverage for provider-removal and model-removal draft flows through shared editor helpers.
   - Changed: `apps/web/src/agent-configuration-editor.ts`, `apps/web/src/index.ts`, `apps/web/test/agent-configuration-editor.test.ts`, `TODO.md`.
 
-- [ ] Implement Project Manager planner service (`goal -> plan -> task list`)
+- [x] Enforce planner-compatible agent-role configuration before save
+  - Summary: Made the reserved `project_manager` role key an explicit planner contract, rejected incompatible agent-role saves before they persist, and kept planner creation working after rejected invalid saves.
+  - Summary (follow-up): Added core, persistence, and runtime regression coverage for the reserved PM-role contract and the rejected-save path.
+  - Changed: `packages/core/src/project-manager-planner-service.ts`, `packages/core/test/project-manager-planner-service.test.ts`, `apps/web/src/persistence.ts`, `apps/web/test/timeline-persistence.test.ts`, `apps/web/test/runtime.test.ts`, `README.md`, `TODO.md`.
+
+- [x] Remove CI-only built-artifact coupling from the CLI workspace smoke test
+  - Summary: Replaced the CLI smoke test's cross-package real web-runtime import with a deterministic stubbed runtime/health path so `pnpm -r test` no longer depends on prebuilt artifacts or local listen behavior in a fresh checkout.
+  - Summary (follow-up): Kept the bootstrap config-generation and CLI URL/status output-contract assertions intact while leaving real web-runtime coverage in the `@orqis/web` suite and the dedicated CLI runtime tests.
+  - Changed: `apps/cli/test/init.test.ts`, `TODO.md`.
+
+- [x] Widen the long-running web integration test timeout budget so workspace smoke CI does not fail passing assertions
+  - Summary: Replaced the repeated 75-second timeout budget in the web runtime and persistence integration suites with one shared 180-second CI timeout after reproducing timeout failures in `pnpm -r test`.
+  - Changed: `apps/web/test/integration-timeouts.ts`, `apps/web/test/persistence-audit.test.ts`, `apps/web/test/runtime.test.ts`, `apps/web/test/timeline-persistence.test.ts`, `TODO.md`.
+
+- [x] Implement Project Manager planner service (`goal -> plan -> task list`)
   - Acceptance criteria: planner persists plan and emits visible plan message in workspace chat.
+  - Summary: Added a deterministic Project Manager planner service that turns a goal plus saved agent roles into a first-pass plan summary and role-owned task drafts.
+  - Summary (follow-up): Added one transactional web persistence flow plus an authenticated workspace planner API/Main Chat action that stores the user goal message, PM planning run, task rows, and visible PM plan message together.
+  - Summary (follow-up): Added core, persistence, and runtime regression coverage for planner validation, restart-safe plan persistence, and the authenticated planner API flow.
+  - Changed: `packages/core/src/project-manager-planner-service.ts`, `packages/core/src/index.ts`, `packages/core/test/project-manager-planner-service.test.ts`, `apps/web/src/persistence.ts`, `apps/web/src/index.ts`, `apps/web/test/timeline-persistence.test.ts`, `apps/web/test/runtime.test.ts`, `apps/web/package.json`, `pnpm-lock.yaml`, `README.md`, `TODO.md`.
 
 - [ ] Implement task assignment records and specialist role mapping
   - Acceptance criteria: each task has owner role, state, run linkage, and timestamps.
@@ -223,6 +241,11 @@ Safe to defer:
 
 - [ ] Add first run lifecycle states (`planned`, `running`, `waiting_approval`, `done`, `failed`)
   - Acceptance criteria: run state transitions are validated and invalid transitions are rejected.
+
+#### Hardening before Phase 4
+
+Unclassified:
+- [ ] Align workspace agent-thread navigation with saved role mappings so customized planner owner roles have matching visible thread labels and navigation entries
 
 ## Phase 4: Workflow hardening and integration
 

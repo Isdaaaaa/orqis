@@ -43,8 +43,8 @@ Why the chosen stack:
 4. CLI prints a local URL and public URL.
 5. User configures providers, models, and agent roles in the web UI.
 6. User creates projects and enters per-project workspaces.
-7. Project Manager agent plans work, assigns tasks, and requests approvals.
-8. Agent outputs and key decisions are tracked in structured state plus chat.
+7. User submits a goal from Main Chat and the Project Manager persists a first-pass plan plus visible task list in the workspace timeline.
+8. Project Manager agent then assigns tasks, requests approvals, and records outputs in later workflow slices.
 
 ## Repo docs
 
@@ -88,7 +88,8 @@ Current runtime behavior:
 - Login issues an `HttpOnly` local session cookie (`SameSite=Lax`) that persists across browser refreshes while the runtime stays up.
 - Session state is in-memory for now, so restarting the web runtime requires signing in again.
 - The `Assigned Agents` section now exposes persistent provider/model/agent-role configuration backed by SQLite and served through `GET/PUT /api/settings/agent-configuration`.
-- Provider/model/role settings are seeded with durable defaults on first run, survive restarts, and are intended for upcoming PM planning and task-assignment flows.
+- Provider/model/role settings are seeded with durable defaults on first run, survive restarts, and must retain the reserved `project_manager` role key so PM planning stays valid.
+- Main Chat now exposes a `Create plan` action backed by `POST /api/workspaces/:workspaceId/planner/runs`, which stores the user goal, a PM planning run, role-owned task records, and the visible PM plan message together.
 - The web runtime now serves project APIs at `GET/POST /api/projects`, creating one persistent workspace mapping per project.
 - The landing UI supports project creation, project selection, and timeline loading for the selected project's workspace.
 - The web runtime now persists workspace timeline messages in SQLite (`orqis.db`) and serves timeline APIs at `GET/POST /api/workspaces/:workspaceId/messages`.

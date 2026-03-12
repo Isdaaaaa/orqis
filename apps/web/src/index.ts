@@ -29,6 +29,8 @@ const SESSION_PATH = "/api/session";
 const PROJECTS_PATH = "/api/projects";
 const AGENT_CONFIGURATION_PATH = "/api/settings/agent-configuration";
 const WORKSPACE_MESSAGES_PATH_PATTERN = /^\/api\/workspaces\/([^/]+)\/messages$/;
+const WORKSPACE_PLANNER_RUNS_PATH_PATTERN =
+  /^\/api\/workspaces\/([^/]+)\/planner\/runs$/;
 const WORKSPACE_MESSAGE_ACTOR_TYPES = ["user", "agent", "system"] as const;
 const SESSION_COOKIE_NAME = "orqis_session";
 const SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
@@ -67,6 +69,11 @@ interface PostWorkspaceMessageBody {
   readonly actorType: WorkspaceMessageActorType;
   readonly actorId?: string;
   readonly content: string;
+}
+
+interface CreateProjectManagerPlanBody {
+  readonly projectId: string;
+  readonly goal: string;
 }
 
 interface CreateProjectBody {
@@ -1001,6 +1008,7 @@ function getWebAppHtml(): string {
         <label class="composer-message-label" for="message-content">Message</label>
         <textarea id="message-content" placeholder="Post a workspace update..."></textarea>
         <div class="composer-actions">
+          <button id="create-plan" type="button">Create plan</button>
           <button id="send-message" type="button">Send message</button>
         </div>
       </footer>
@@ -1030,6 +1038,7 @@ function getWebAppHtml(): string {
     const actorTypeInput = document.getElementById("actor-type");
     const actorIdInput = document.getElementById("actor-id");
     const contentInput = document.getElementById("message-content");
+    const createPlanButton = document.getElementById("create-plan");
     const sendButton = document.getElementById("send-message");
     const reloadButton = document.getElementById("reload-messages");
     const logoutButton = document.getElementById("logout");
@@ -1849,6 +1858,7 @@ function getWebAppHtml(): string {
       timelineRegion.hidden = !showTimeline;
       detailRegion.hidden = showTimeline;
       composerShell.hidden = !showTimeline;
+      createPlanButton.hidden = activeViewId !== "main-chat";
 
       if (!showTimeline) {
         renderDetailView();
@@ -1865,6 +1875,7 @@ function getWebAppHtml(): string {
         selectedProjectName.textContent = "No project selected";
         selectedProjectSlug.textContent = "Create a project from the left rail to start.";
         selectedWorkspace.textContent = "none";
+        createPlanButton.disabled = true;
         sendButton.disabled = true;
         reloadButton.disabled = true;
         actorTypeInput.disabled = true;
@@ -1876,6 +1887,7 @@ function getWebAppHtml(): string {
       selectedProjectName.textContent = selectedProject.projectName;
       selectedProjectSlug.textContent = selectedProject.projectSlug;
       selectedWorkspace.textContent = selectedProject.workspaceId;
+      createPlanButton.disabled = activeViewId !== "main-chat";
       sendButton.disabled = !timelineEnabled;
       reloadButton.disabled = !timelineEnabled;
       actorTypeInput.disabled = !timelineEnabled;
@@ -1891,6 +1903,16 @@ function getWebAppHtml(): string {
       }
 
       return "/api/workspaces/" + encodeURIComponent(selectedProject.workspaceId) + "/messages";
+    };
+
+    const plannerRunsUrl = () => {
+      const selectedProject = getSelectedProject();
+
+      if (selectedProject === null) {
+        return null;
+      }
+
+      return "/api/workspaces/" + encodeURIComponent(selectedProject.workspaceId) + "/planner/runs";
     };
 
     const reloadTimeline = async (announce = true) => {
@@ -2076,6 +2098,56 @@ function getWebAppHtml(): string {
       setStatus("Message stored.");
     };
 
+    const createPlan = async () => {
+      if (activeViewId !== "main-chat") {
+        setStatus("Switch to Main Chat to create a Project Manager plan.", true);
+        return;
+      }
+
+      const selectedProject = getSelectedProject();
+      const url = plannerRunsUrl();
+      const goal = contentInput.value.trim();
+
+      if (selectedProject === null || url === null) {
+        setStatus("Create and select a project first.", true);
+        return;
+      }
+
+      if (goal.length === 0) {
+        setStatus("Goal is required to create a plan.", true);
+        return;
+      }
+
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          projectId: selectedProject.projectId,
+          goal,
+        }),
+      });
+
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Failed to create plan.");
+      }
+
+      const taskCount = Array.isArray(payload.plan?.tasks)
+        ? payload.plan.tasks.length
+        : 0;
+
+      contentInput.value = "";
+      await reloadTimeline(false);
+      setStatus(
+        "Plan created with " +
+          taskCount +
+          " task" +
+          (taskCount === 1 ? "" : "s") +
+          ".",
+      );
+    };
+
     const setActiveView = async (viewId) => {
       if (viewMeta[viewId] === undefined || activeViewId === viewId) {
         return;
@@ -2165,6 +2237,14 @@ function getWebAppHtml(): string {
     sendButton.addEventListener("click", async () => {
       try {
         await sendMessage();
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : String(error), true);
+      }
+    });
+
+    createPlanButton.addEventListener("click", async () => {
+      try {
+        await createPlan();
       } catch (error) {
         setStatus(error instanceof Error ? error.message : String(error), true);
       }
@@ -2492,6 +2572,44 @@ function parsePostWorkspaceMessageBody(
   };
 }
 
+function parseCreateProjectManagerPlanBody(
+  body: unknown,
+):
+  | { ok: true; value: CreateProjectManagerPlanBody }
+  | { ok: false; error: string } {
+  if (!isRecord(body)) {
+    return {
+      ok: false,
+      error: "Planner payload must be a JSON object.",
+    };
+  }
+
+  const projectId = normalizeOptionalString(body.projectId);
+  const goal = normalizeOptionalString(body.goal);
+
+  if (projectId === undefined) {
+    return {
+      ok: false,
+      error: "projectId must be a non-empty string.",
+    };
+  }
+
+  if (goal === undefined) {
+    return {
+      ok: false,
+      error: "goal must be a non-empty string.",
+    };
+  }
+
+  return {
+    ok: true,
+    value: {
+      projectId,
+      goal,
+    },
+  };
+}
+
 function parseCreateProjectBody(
   body: unknown,
 ): { ok: true; value: CreateProjectBody } | { ok: false; error: string } {
@@ -2736,6 +2854,27 @@ function parseAgentConfigurationBody(
 
 function resolveWorkspaceMessagesPath(pathname: string): string | undefined {
   const match = pathname.match(WORKSPACE_MESSAGES_PATH_PATTERN);
+
+  if (match === null) {
+    return undefined;
+  }
+
+  const encodedWorkspaceId = match[1];
+
+  if (encodedWorkspaceId === undefined) {
+    return undefined;
+  }
+
+  try {
+    const decodedWorkspaceId = decodeURIComponent(encodedWorkspaceId);
+    return decodedWorkspaceId.trim().length > 0 ? decodedWorkspaceId : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveWorkspacePlannerRunsPath(pathname: string): string | undefined {
+  const match = pathname.match(WORKSPACE_PLANNER_RUNS_PATH_PATTERN);
 
   if (match === null) {
     return undefined;
@@ -3447,6 +3586,83 @@ async function handleWorkspaceMessagesRoute(
   });
 }
 
+async function handleWorkspacePlannerRunsRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  context: RuntimeRequestContext,
+  workspaceId: string,
+  session: RuntimeSession,
+): Promise<void> {
+  if (request.method === "POST") {
+    let payload;
+
+    try {
+      payload = await readJsonRequestBody(request);
+    } catch (error) {
+      if (error instanceof RequestBodyTooLargeError) {
+        writeJson(response, 413, {
+          error: error.message,
+        });
+        return;
+      }
+
+      if (error instanceof RequestBodyJsonParseError) {
+        writeJson(response, 400, {
+          error: error.message,
+        });
+        return;
+      }
+
+      throw error;
+    }
+
+    const parsedBody = parseCreateProjectManagerPlanBody(payload);
+
+    if (!parsedBody.ok) {
+      writeJson(response, 400, {
+        error: parsedBody.error,
+      });
+      return;
+    }
+
+    try {
+      const plan = context.timelineStore.createProjectManagerPlan({
+        workspaceId,
+        projectId: parsedBody.value.projectId,
+        goal: parsedBody.value.goal,
+        requestedByActorId: session.actorId,
+      });
+
+      writeJson(response, 201, {
+        plan,
+      });
+      return;
+    } catch (error) {
+      if (error instanceof WorkspaceTimelineValidationError) {
+        writeJson(response, 400, {
+          error: error.message,
+        });
+        return;
+      }
+
+      if (error instanceof WorkspaceTimelineConflictError) {
+        writeJson(response, 409, {
+          error: error.message,
+        });
+        return;
+      }
+
+      throw error;
+    }
+  }
+
+  response.setHeader("allow", "POST");
+  writeJson(response, 405, {
+    error: "Method Not Allowed",
+    method: request.method ?? "UNKNOWN",
+  });
+}
+
 async function handleRequest(
   request: IncomingMessage,
   response: ServerResponse,
@@ -3501,6 +3717,19 @@ async function handleRequest(
 
   if (pathname === AGENT_CONFIGURATION_PATH) {
     await handleAgentConfigurationRoute(request, response, context);
+    return;
+  }
+
+  const plannerWorkspaceId = resolveWorkspacePlannerRunsPath(pathname);
+
+  if (plannerWorkspaceId !== undefined && session !== undefined) {
+    await handleWorkspacePlannerRunsRoute(
+      request,
+      response,
+      context,
+      plannerWorkspaceId,
+      session,
+    );
     return;
   }
 

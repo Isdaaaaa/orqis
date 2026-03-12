@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createWorkspaceTimelineDatabaseHandle } from "../src/persistence.ts";
+import { WORKSPACE_CI_INTEGRATION_TIMEOUT_MS } from "./integration-timeouts.ts";
 
 interface AuditEventRow {
   readonly action: string;
@@ -208,6 +209,6 @@ describe("@orqis/web workspace persistence audit integration", () => {
         await rm(tempDir, { recursive: true, force: true });
       }
     },
-    75_000,
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
   );
 });

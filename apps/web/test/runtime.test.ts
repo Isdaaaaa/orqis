@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { startOrqisWebRuntime } from "../src/index.ts";
+import { WORKSPACE_CI_INTEGRATION_TIMEOUT_MS } from "./integration-timeouts.ts";
 
 async function createRuntimeDatabaseFilePath(): Promise<{
   readonly databaseFilePath: string;
@@ -205,7 +206,7 @@ describe("@orqis/web runtime", () => {
         await cleanup();
       }
     },
-    75_000,
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
   );
 
   it(
@@ -302,7 +303,7 @@ describe("@orqis/web runtime", () => {
         await cleanup();
       }
     },
-    75_000,
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
   );
 
   it(
@@ -450,12 +451,236 @@ describe("@orqis/web runtime", () => {
         expect(invalidConfigurationBody.error).toBe(
           "At least two agent role configurations are required.",
         );
+
+        const missingProjectManagerResponse = await fetch(configurationUrl, {
+          method: "PUT",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            providers: [
+              {
+                providerKey: "anthropic",
+                displayName: "Anthropic",
+                baseUrl: "https://api.anthropic.com/v1",
+              },
+            ],
+            models: [
+              {
+                modelKey: "claude-sonnet-4",
+                providerKey: "anthropic",
+                displayName: "Claude Sonnet 4",
+              },
+            ],
+            agentRoles: [
+              {
+                roleKey: "pm",
+                displayName: "Project Manager",
+                modelKey: "claude-sonnet-4",
+                responsibility: "Creates plans and coordinates approvals.",
+              },
+              {
+                roleKey: "backend_agent",
+                displayName: "Backend Agent",
+                modelKey: "claude-sonnet-4",
+                responsibility: "Owns runtime behavior and persistence changes.",
+              },
+            ],
+          }),
+        });
+        const missingProjectManagerBody =
+          (await missingProjectManagerResponse.json()) as { error?: string };
+
+        expect(missingProjectManagerResponse.status).toBe(400);
+        expectNoStoreCacheControl(missingProjectManagerResponse);
+        expect(missingProjectManagerBody.error).toBe(
+          'agentRoles must include the reserved "project_manager" role key for planner compatibility.',
+        );
+
+        const createProjectResponse = await fetch(`${runtime.baseUrl}/api/projects`, {
+          method: "POST",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            name: "Planner After Rejected Config",
+          }),
+        });
+        const createProjectBody = (await createProjectResponse.json()) as {
+          project?: {
+            projectId: string;
+            workspaceId: string;
+          };
+        };
+
+        expect(createProjectResponse.status).toBe(201);
+
+        const createdProject = createProjectBody.project;
+
+        if (createdProject === undefined) {
+          throw new Error("expected project details after rejected config save");
+        }
+
+        const createPlanResponse = await fetch(
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/planner/runs`,
+          {
+            method: "POST",
+            headers: withSessionCookie(sessionCookie, {
+              "content-type": "application/json",
+            }),
+            body: JSON.stringify({
+              projectId: createdProject.projectId,
+              goal: "Plan after rejected PM rename",
+            }),
+          },
+        );
+        const createPlanBody = (await createPlanResponse.json()) as {
+          plan?: {
+            projectManagerRoleKey?: string;
+          };
+          error?: string;
+        };
+
+        expect(createPlanResponse.status).toBe(201);
+        expectNoStoreCacheControl(createPlanResponse);
+        expect(createPlanBody.plan?.projectManagerRoleKey).toBe("project_manager");
       } finally {
         await runtime.stop();
         await cleanup();
       }
     },
-    75_000,
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
+  );
+
+  it(
+    "creates a Project Manager plan through the authenticated workspace planner API and emits visible timeline messages",
+    async () => {
+      const { databaseFilePath, cleanup } = await createRuntimeDatabaseFilePath();
+      const runtime = await startOrqisWebRuntime({
+        host: "127.0.0.1",
+        port: 0,
+        persistence: {
+          databaseFilePath,
+        },
+      });
+
+      try {
+        const sessionCookie = await createSessionCookie(runtime.baseUrl, "owner");
+
+        const createProjectResponse = await fetch(`${runtime.baseUrl}/api/projects`, {
+          method: "POST",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            name: "Planner Runtime Project",
+          }),
+        });
+        const createProjectBody = (await createProjectResponse.json()) as {
+          project?: {
+            projectId: string;
+            workspaceId: string;
+          };
+        };
+
+        expect(createProjectResponse.status).toBe(201);
+
+        const createdProject = createProjectBody.project;
+
+        if (createdProject === undefined) {
+          throw new Error("expected project details for planner runtime assertions");
+        }
+
+        const plannerUrl =
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/planner/runs`;
+
+        await expectAuthenticationRequiredResponse(
+          await fetch(plannerUrl, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({
+              projectId: createdProject.projectId,
+              goal: "Plan the first release candidate",
+            }),
+          }),
+        );
+
+        const createPlanResponse = await fetch(plannerUrl, {
+          method: "POST",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            projectId: createdProject.projectId,
+            goal: "Plan the first release candidate",
+          }),
+        });
+        const createPlanBody = (await createPlanResponse.json()) as {
+          plan?: {
+            runId?: string;
+            summary?: string;
+            projectManagerRoleKey?: string;
+            tasks?: Array<{ ownerRole?: string }>;
+          };
+          error?: string;
+        };
+
+        expect(createPlanResponse.status).toBe(201);
+        expectNoStoreCacheControl(createPlanResponse);
+        expect(createPlanBody.plan?.runId).toBeTypeOf("string");
+        expect(createPlanBody.plan?.summary).toContain("release candidate");
+        expect(createPlanBody.plan?.projectManagerRoleKey).toBe("project_manager");
+        expect(createPlanBody.plan?.tasks?.map((task) => task.ownerRole)).toEqual([
+          "frontend_agent",
+          "backend_agent",
+          "reviewer",
+        ]);
+
+        const timelineResponse = await fetch(
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/messages`,
+          {
+            headers: withSessionCookie(sessionCookie),
+          },
+        );
+        const timelineBody = (await timelineResponse.json()) as {
+          messages?: Array<{
+            actorType?: string;
+            actorId?: string | null;
+            content?: string;
+          }>;
+        };
+
+        expect(timelineResponse.status).toBe(200);
+        expectNoStoreCacheControl(timelineResponse);
+        expect(timelineBody.messages).toHaveLength(2);
+        expect(timelineBody.messages?.[0]).toMatchObject({
+          actorType: "user",
+          actorId: "owner",
+          content: "Plan the first release candidate",
+        });
+        expect(timelineBody.messages?.[1]).toMatchObject({
+          actorType: "agent",
+          actorId: "project_manager",
+        });
+        expect(timelineBody.messages?.[1]?.content).toContain(
+          "Project Manager plan for:",
+        );
+
+        const landingResponse = await fetch(runtime.baseUrl, {
+          headers: withSessionCookie(sessionCookie),
+        });
+        const landingPage = await landingResponse.text();
+
+        expect(landingResponse.status).toBe(200);
+        expect(landingPage).toContain("Create plan");
+      } finally {
+        await runtime.stop();
+        await cleanup();
+      }
+    },
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
   );
 
   it(
@@ -502,7 +727,7 @@ describe("@orqis/web runtime", () => {
         await cleanup();
       }
     },
-    75_000,
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
   );
 
   it(
@@ -682,7 +907,7 @@ describe("@orqis/web runtime", () => {
         await cleanup();
       }
     },
-    75_000,
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
   );
 
   it(
@@ -712,6 +937,6 @@ describe("@orqis/web runtime", () => {
         await cleanup();
       }
     },
-    75_000,
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
   );
 });
