@@ -8,6 +8,9 @@ import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
 import {
+  serializeAgentConfigurationEditorClientHelpers,
+} from "./agent-configuration-editor.js";
+import {
   createWorkspaceTimelineStore,
   type AppendWorkspaceTimelineMessageInput,
   type SaveAgentConfigurationInput,
@@ -1059,11 +1062,7 @@ function getWebAppHtml(): string {
       responsibility: "",
     });
 
-    const createEmptyAgentConfiguration = () => ({
-      providers: [],
-      models: [],
-      agentRoles: [],
-    });
+    ${serializeAgentConfigurationEditorClientHelpers()}
 
     const viewMeta = {
       "main-chat": {
@@ -1114,89 +1113,6 @@ function getWebAppHtml(): string {
     const setStatus = (message, isError = false) => {
       status.textContent = message;
       status.dataset.variant = isError ? "error" : "info";
-    };
-
-    const cloneAgentConfiguration = (configuration) => {
-      const source = configuration ?? createEmptyAgentConfiguration();
-
-      return {
-        providers: Array.isArray(source.providers)
-          ? source.providers.map((provider) => ({
-            providerKey:
-              typeof provider?.providerKey === "string" ? provider.providerKey : "",
-            displayName:
-              typeof provider?.displayName === "string" ? provider.displayName : "",
-            baseUrl: typeof provider?.baseUrl === "string" ? provider.baseUrl : "",
-          }))
-          : [],
-        models: Array.isArray(source.models)
-          ? source.models.map((model) => ({
-            modelKey: typeof model?.modelKey === "string" ? model.modelKey : "",
-            providerKey:
-              typeof model?.providerKey === "string" ? model.providerKey : "",
-            displayName:
-              typeof model?.displayName === "string" ? model.displayName : "",
-          }))
-          : [],
-        agentRoles: Array.isArray(source.agentRoles)
-          ? source.agentRoles.map((agentRole) => ({
-            roleKey:
-              typeof agentRole?.roleKey === "string" ? agentRole.roleKey : "",
-            displayName:
-              typeof agentRole?.displayName === "string"
-                ? agentRole.displayName
-                : "",
-            modelKey:
-              typeof agentRole?.modelKey === "string" ? agentRole.modelKey : "",
-            responsibility:
-              typeof agentRole?.responsibility === "string"
-                ? agentRole.responsibility
-                : "",
-          }))
-          : [],
-      };
-    };
-
-    const normalizeAgentConfigurationDraft = (configuration) => {
-      const draft = cloneAgentConfiguration(configuration);
-      const firstProviderKey = draft.providers[0]?.providerKey ?? "";
-      const availableProviderKeys = new Set(
-        draft.providers
-          .map((provider) => provider.providerKey.trim())
-          .filter((providerKey) => providerKey.length > 0),
-      );
-
-      draft.models = draft.models.map((model) => {
-        const providerKey = model.providerKey.trim();
-
-        return {
-          modelKey: model.modelKey,
-          displayName: model.displayName,
-          providerKey: availableProviderKeys.has(providerKey)
-            ? providerKey
-            : firstProviderKey,
-        };
-      });
-
-      const firstModelKey = draft.models[0]?.modelKey ?? "";
-      const availableModelKeys = new Set(
-        draft.models
-          .map((model) => model.modelKey.trim())
-          .filter((modelKey) => modelKey.length > 0),
-      );
-
-      draft.agentRoles = draft.agentRoles.map((agentRole) => {
-        const modelKey = agentRole.modelKey.trim();
-
-        return {
-          roleKey: agentRole.roleKey,
-          displayName: agentRole.displayName,
-          responsibility: agentRole.responsibility,
-          modelKey: availableModelKeys.has(modelKey) ? modelKey : firstModelKey,
-        };
-      });
-
-      return draft;
     };
 
     const readFieldValue = (container, fieldName) => {
@@ -1415,6 +1331,33 @@ function getWebAppHtml(): string {
           removeButton.textContent = "Remove";
           removeButton.addEventListener("click", () => {
             const nextDraft = readAgentConfigurationDraftFromForm();
+            const provider = nextDraft.providers[index];
+
+            if (provider === undefined) {
+              return;
+            }
+
+            const dependentModels = listDependentModelLabelsForProvider(
+              nextDraft,
+              provider.providerKey,
+            );
+
+            if (dependentModels.length > 0) {
+              const providerLabel = provider.displayName.trim().length > 0
+                ? provider.displayName.trim()
+                : provider.providerKey.trim() || "this provider";
+
+              setStatus(
+                'Cannot remove provider "' +
+                  providerLabel +
+                  '" while models still reference it: ' +
+                  dependentModels.join(", ") +
+                  ". Reassign or remove those models first.",
+                true,
+              );
+              return;
+            }
+
             nextDraft.providers.splice(index, 1);
             agentConfiguration = normalizeAgentConfigurationDraft(nextDraft);
             if (activeViewId === "assigned-agents") {
@@ -1497,6 +1440,33 @@ function getWebAppHtml(): string {
           removeButton.textContent = "Remove";
           removeButton.addEventListener("click", () => {
             const nextDraft = readAgentConfigurationDraftFromForm();
+            const modelToRemove = nextDraft.models[index];
+
+            if (modelToRemove === undefined) {
+              return;
+            }
+
+            const dependentRoles = listDependentRoleLabelsForModel(
+              nextDraft,
+              modelToRemove.modelKey,
+            );
+
+            if (dependentRoles.length > 0) {
+              const modelLabel = modelToRemove.displayName.trim().length > 0
+                ? modelToRemove.displayName.trim()
+                : modelToRemove.modelKey.trim() || "this model";
+
+              setStatus(
+                'Cannot remove model "' +
+                  modelLabel +
+                  '" while agent roles still reference it: ' +
+                  dependentRoles.join(", ") +
+                  ". Reassign or remove those roles first.",
+                true,
+              );
+              return;
+            }
+
             nextDraft.models.splice(index, 1);
             agentConfiguration = normalizeAgentConfigurationDraft(nextDraft);
             if (activeViewId === "assigned-agents") {
@@ -1523,7 +1493,11 @@ function getWebAppHtml(): string {
               "Provider",
               "providerKey",
               model.providerKey,
-              providerOptions,
+              buildSelectOptionsWithMissingValue(
+                providerOptions,
+                model.providerKey,
+                "Missing provider",
+              ),
               "Add a provider first",
             ),
           );
@@ -1606,7 +1580,11 @@ function getWebAppHtml(): string {
               "Model",
               "modelKey",
               agentRole.modelKey,
-              modelOptions,
+              buildSelectOptionsWithMissingValue(
+                modelOptions,
+                agentRole.modelKey,
+                "Missing model",
+              ),
               "Add a model first",
             ),
           );
