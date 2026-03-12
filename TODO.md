@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Continue Phase 3 with the Project Manager planner service now that provider/model/agent-role settings persist across restarts and can be consumed by later workflow slices.
+Continue Phase 3 with task assignment records and specialist role mapping now that Project Manager planning runs, task lists, and visible plan messages persist in workspace state.
 
 ## Completed
 
@@ -209,8 +209,12 @@ Safe to defer:
   - Summary (follow-up): Added focused regression coverage for provider-removal and model-removal draft flows through shared editor helpers.
   - Changed: `apps/web/src/agent-configuration-editor.ts`, `apps/web/src/index.ts`, `apps/web/test/agent-configuration-editor.test.ts`, `TODO.md`.
 
-- [ ] Implement Project Manager planner service (`goal -> plan -> task list`)
+- [x] Implement Project Manager planner service (`goal -> plan -> task list`)
   - Acceptance criteria: planner persists plan and emits visible plan message in workspace chat.
+  - Summary: Added a deterministic Project Manager planner service that turns a goal plus saved agent roles into a first-pass plan summary and role-owned task drafts.
+  - Summary (follow-up): Added one transactional web persistence flow plus an authenticated workspace planner API/Main Chat action that stores the user goal message, PM planning run, task rows, and visible PM plan message together.
+  - Summary (follow-up): Added core, persistence, and runtime regression coverage for planner validation, restart-safe plan persistence, and the authenticated planner API flow.
+  - Changed: `packages/core/src/project-manager-planner-service.ts`, `packages/core/src/index.ts`, `packages/core/test/project-manager-planner-service.test.ts`, `apps/web/src/persistence.ts`, `apps/web/src/index.ts`, `apps/web/test/timeline-persistence.test.ts`, `apps/web/test/runtime.test.ts`, `apps/web/package.json`, `pnpm-lock.yaml`, `README.md`, `TODO.md`.
 
 - [ ] Implement task assignment records and specialist role mapping
   - Acceptance criteria: each task has owner role, state, run linkage, and timestamps.

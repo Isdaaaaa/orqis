@@ -7,5 +7,6 @@ export function createInitialRunStatus(): RunStatus {
 }
 
 export * from "./approval-guarded-transition-service.js";
+export * from "./project-manager-planner-service.js";
 export * from "./specialist-agent-adapter-registry.js";
 export * from "./task-claim-service.js";

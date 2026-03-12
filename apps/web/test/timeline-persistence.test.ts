@@ -267,6 +267,146 @@ describe("@orqis/web workspace timeline persistence", () => {
   );
 
   it(
+    "persists a Project Manager plan as a run, task list, and visible workspace messages",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "orqis-web-planner-"));
+      const databaseFilePath = join(tempDir, "planner.db");
+
+      const firstStore = createWorkspaceTimelineStore({
+        databaseFilePath,
+      });
+
+      let createdProject:
+        | {
+            readonly projectId: string;
+            readonly workspaceId: string;
+          }
+        | undefined;
+
+      try {
+        createdProject = firstStore.createProject({
+          name: "Planner Project",
+        });
+
+        const plan = firstStore.createProjectManagerPlan({
+          workspaceId: createdProject.workspaceId,
+          projectId: createdProject.projectId,
+          goal: "Implement the first approval workflow",
+          requestedByActorId: "owner",
+        });
+
+        expect(plan.projectId).toBe(createdProject.projectId);
+        expect(plan.workspaceId).toBe(createdProject.workspaceId);
+        expect(plan.summary).toContain("first approval workflow");
+        expect(plan.projectManagerRoleKey).toBe("project_manager");
+        expect(plan.goalMessage).toMatchObject({
+          actorType: "user",
+          actorId: "owner",
+          content: "Implement the first approval workflow",
+        });
+        expect(plan.planMessage).toMatchObject({
+          actorType: "agent",
+          actorId: "project_manager",
+        });
+        expect(plan.planMessage.content).toContain("Project Manager plan for:");
+        expect(plan.tasks.map((task) => task.ownerRole)).toEqual([
+          "frontend_agent",
+          "backend_agent",
+          "reviewer",
+        ]);
+      } finally {
+        firstStore.close();
+      }
+
+      if (createdProject === undefined) {
+        throw new Error("expected project details for planner persistence assertions");
+      }
+
+      const secondStore = createWorkspaceTimelineStore({
+        databaseFilePath,
+      });
+
+      try {
+        const messages = secondStore.listWorkspaceMessages(createdProject.workspaceId);
+
+        expect(messages).toHaveLength(2);
+        expect(messages.map((message) => message.actorType)).toEqual([
+          "user",
+          "agent",
+        ]);
+        expect(messages[0]?.content).toBe("Implement the first approval workflow");
+        expect(messages[1]?.content).toContain("Project Manager plan for:");
+      } finally {
+        secondStore.close();
+      }
+
+      const database = new BetterSqlite3(databaseFilePath, {
+        readonly: true,
+      });
+
+      try {
+        const runs = database
+          .prepare(
+            [
+              "SELECT",
+              "  id,",
+              "  status,",
+              "  summary,",
+              "  workspace_id AS workspaceId",
+              "FROM runs",
+            ].join("\n"),
+          )
+          .all() as Array<{
+          id: string;
+          status: string;
+          summary: string;
+          workspaceId: string;
+        }>;
+        const tasks = database
+          .prepare(
+            [
+              "SELECT",
+              "  owner_role AS ownerRole,",
+              "  state",
+              "FROM tasks",
+              "ORDER BY rowid ASC",
+            ].join("\n"),
+          )
+          .all() as Array<{
+          ownerRole: string;
+          state: string;
+        }>;
+
+        expect(runs).toEqual([
+          expect.objectContaining({
+            status: "planned",
+            workspaceId: createdProject.workspaceId,
+            summary: expect.stringContaining("first approval workflow"),
+          }),
+        ]);
+        expect(tasks).toEqual([
+          {
+            ownerRole: "frontend_agent",
+            state: "todo",
+          },
+          {
+            ownerRole: "backend_agent",
+            state: "todo",
+          },
+          {
+            ownerRole: "reviewer",
+            state: "todo",
+          },
+        ]);
+      } finally {
+        database.close();
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+    75_000,
+  );
+
+  it(
     "upgrades legacy phase 2 databases without a migration ledger and seeds agent configuration defaults",
     async () => {
       const tempDir = await mkdtemp(join(tmpdir(), "orqis-web-agent-legacy-"));

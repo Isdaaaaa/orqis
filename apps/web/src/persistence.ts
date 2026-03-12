@@ -5,6 +5,10 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import BetterSqlite3 from "better-sqlite3";
+import {
+  createProjectManagerPlannerService,
+  ProjectManagerPlannerValidationError,
+} from "@orqis/core";
 
 type SqliteDatabaseSync = InstanceType<typeof BetterSqlite3>;
 
@@ -125,6 +129,41 @@ export interface SaveAgentConfigurationInput {
   readonly agentRoles: readonly SaveAgentRoleConfigurationInput[];
 }
 
+export interface CreateProjectManagerPlanInput {
+  readonly workspaceId: string;
+  readonly projectId: string;
+  readonly goal: string;
+  readonly requestedByActorId: string;
+}
+
+export interface ProjectManagerPlannedTaskRecord {
+  readonly id: string;
+  readonly projectId: string;
+  readonly workspaceId: string;
+  readonly runId: string;
+  readonly ownerRole: string;
+  readonly ownerDisplayName: string;
+  readonly title: string;
+  readonly description: string;
+  readonly state: "todo";
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ProjectManagerPlanRecord {
+  readonly projectId: string;
+  readonly workspaceId: string;
+  readonly runId: string;
+  readonly goal: string;
+  readonly summary: string;
+  readonly projectManagerRoleKey: string;
+  readonly projectManagerDisplayName: string;
+  readonly createdAt: string;
+  readonly goalMessage: WorkspaceTimelineMessage;
+  readonly planMessage: WorkspaceTimelineMessage;
+  readonly tasks: readonly ProjectManagerPlannedTaskRecord[];
+}
+
 export interface WorkspaceTimelineStoreOptions {
   readonly databaseFilePath?: string;
   readonly configDir?: string;
@@ -135,6 +174,7 @@ export interface WorkspaceTimelineStore {
   readonly databaseFilePath: string;
   listProjects(): ProjectWorkspaceSummary[];
   createProject(input: CreateProjectInput): ProjectWorkspaceSummary;
+  createProjectManagerPlan(input: CreateProjectManagerPlanInput): ProjectManagerPlanRecord;
   listWorkspaceMessages(workspaceId: string): WorkspaceTimelineMessage[];
   getAgentConfiguration(): AgentConfiguration;
   saveAgentConfiguration(input: SaveAgentConfigurationInput): AgentConfiguration;
@@ -1071,6 +1111,195 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
     }
   }
 
+  createProjectManagerPlan(
+    input: CreateProjectManagerPlanInput,
+  ): ProjectManagerPlanRecord {
+    const workspaceId = normalizeRequiredString(input.workspaceId, "workspaceId");
+    const projectId = normalizeRequiredString(input.projectId, "projectId");
+    const goal = normalizeRequiredString(input.goal, "goal");
+    const requestedByActorId = normalizeRequiredString(
+      input.requestedByActorId,
+      "requestedByActorId",
+    );
+
+    const planner = createProjectManagerPlannerService();
+    let plan;
+
+    try {
+      plan = planner.planGoal({
+        goal,
+        roles: this.getAgentConfiguration().agentRoles,
+      });
+    } catch (error) {
+      if (error instanceof ProjectManagerPlannerValidationError) {
+        throw new WorkspaceTimelineValidationError(error.message);
+      }
+
+      throw error;
+    }
+
+    const createdAt = new Date().toISOString();
+    const runId = randomUUID();
+    const goalMessageId = randomUUID();
+    const planMessageId = randomUUID();
+    const plannedTasks = [] as ProjectManagerPlannedTaskRecord[];
+    let transactionStarted = false;
+
+    try {
+      this.database.exec("BEGIN IMMEDIATE");
+      transactionStarted = true;
+
+      this.requireProjectWorkspaceMatch(workspaceId, projectId);
+
+      this.databaseHandle.auditContext.runWithContext(
+        {
+          actorType: "agent",
+          actorId: plan.projectManagerRoleKey,
+          correlationRunId: runId,
+        },
+        () => {
+          this.database
+            .prepare(
+              [
+                "INSERT INTO runs",
+                "  (id, project_id, workspace_id, status, summary, created_at, updated_at)",
+                "VALUES",
+                "  (?, ?, ?, ?, ?, ?, ?)",
+              ].join("\n"),
+            )
+            .run(
+              runId,
+              projectId,
+              workspaceId,
+              "planned",
+              plan.summary,
+              createdAt,
+              createdAt,
+            );
+
+          for (const task of plan.tasks) {
+            const taskId = randomUUID();
+
+            this.database
+              .prepare(
+                [
+                  "INSERT INTO tasks",
+                  "  (id, project_id, workspace_id, run_id, title, description, state, owner_role, created_at, updated_at)",
+                  "VALUES",
+                  "  (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ].join("\n"),
+              )
+              .run(
+                taskId,
+                projectId,
+                workspaceId,
+                runId,
+                task.title,
+                task.description,
+                task.state,
+                task.ownerRole,
+                createdAt,
+                createdAt,
+              );
+
+            plannedTasks.push({
+              id: taskId,
+              projectId,
+              workspaceId,
+              runId,
+              ownerRole: task.ownerRole,
+              ownerDisplayName: task.ownerDisplayName,
+              title: task.title,
+              description: task.description,
+              state: task.state,
+              createdAt,
+              updatedAt: createdAt,
+            });
+          }
+        },
+      );
+
+      this.database
+        .prepare(
+          [
+            "INSERT INTO messages",
+            "  (id, project_id, workspace_id, run_id, actor_type, actor_id, content, created_at)",
+            "VALUES",
+            "  (?, ?, ?, ?, ?, ?, ?, ?)",
+          ].join("\n"),
+        )
+        .run(
+          goalMessageId,
+          projectId,
+          workspaceId,
+          runId,
+          "user",
+          requestedByActorId,
+          goal,
+          createdAt,
+        );
+
+      this.database
+        .prepare(
+          [
+            "INSERT INTO messages",
+            "  (id, project_id, workspace_id, run_id, actor_type, actor_id, content, created_at)",
+            "VALUES",
+            "  (?, ?, ?, ?, ?, ?, ?, ?)",
+          ].join("\n"),
+        )
+        .run(
+          planMessageId,
+          projectId,
+          workspaceId,
+          runId,
+          "agent",
+          plan.projectManagerRoleKey,
+          plan.message,
+          createdAt,
+        );
+
+      this.database.exec("COMMIT");
+      transactionStarted = false;
+
+      return {
+        projectId,
+        workspaceId,
+        runId,
+        goal,
+        summary: plan.summary,
+        projectManagerRoleKey: plan.projectManagerRoleKey,
+        projectManagerDisplayName: plan.projectManagerDisplayName,
+        createdAt,
+        goalMessage: {
+          id: goalMessageId,
+          projectId,
+          workspaceId,
+          actorType: "user",
+          actorId: requestedByActorId,
+          content: goal,
+          createdAt,
+        },
+        planMessage: {
+          id: planMessageId,
+          projectId,
+          workspaceId,
+          actorType: "agent",
+          actorId: plan.projectManagerRoleKey,
+          content: plan.message,
+          createdAt,
+        },
+        tasks: plannedTasks,
+      };
+    } catch (error) {
+      if (transactionStarted) {
+        this.database.exec("ROLLBACK");
+      }
+
+      throw mapSqliteError(error);
+    }
+  }
+
   close(): void {
     if (this.closed) {
       return;
@@ -1135,6 +1364,27 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
       .run(workspaceId, resolvedProjectId, createWorkspaceName(workspaceId));
 
     return resolvedProjectId;
+  }
+
+  private requireProjectWorkspaceMatch(
+    workspaceId: string,
+    projectId: string,
+  ): void {
+    const existingWorkspace = this.database
+      .prepare("SELECT project_id AS projectId FROM workspaces WHERE id = ?")
+      .get(workspaceId) as WorkspaceProjectRow | undefined;
+
+    if (existingWorkspace === undefined) {
+      throw new WorkspaceTimelineConflictError(
+        `workspace ${workspaceId} does not exist.`,
+      );
+    }
+
+    if (existingWorkspace.projectId !== projectId) {
+      throw new WorkspaceTimelineConflictError(
+        `workspace ${workspaceId} belongs to project ${existingWorkspace.projectId}; cannot plan for project ${projectId}.`,
+      );
+    }
   }
 
   private resolveUniqueProjectSlug(baseSlug: string): string {

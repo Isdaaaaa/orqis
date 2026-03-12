@@ -459,6 +459,137 @@ describe("@orqis/web runtime", () => {
   );
 
   it(
+    "creates a Project Manager plan through the authenticated workspace planner API and emits visible timeline messages",
+    async () => {
+      const { databaseFilePath, cleanup } = await createRuntimeDatabaseFilePath();
+      const runtime = await startOrqisWebRuntime({
+        host: "127.0.0.1",
+        port: 0,
+        persistence: {
+          databaseFilePath,
+        },
+      });
+
+      try {
+        const sessionCookie = await createSessionCookie(runtime.baseUrl, "owner");
+
+        const createProjectResponse = await fetch(`${runtime.baseUrl}/api/projects`, {
+          method: "POST",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            name: "Planner Runtime Project",
+          }),
+        });
+        const createProjectBody = (await createProjectResponse.json()) as {
+          project?: {
+            projectId: string;
+            workspaceId: string;
+          };
+        };
+
+        expect(createProjectResponse.status).toBe(201);
+
+        const createdProject = createProjectBody.project;
+
+        if (createdProject === undefined) {
+          throw new Error("expected project details for planner runtime assertions");
+        }
+
+        const plannerUrl =
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/planner/runs`;
+
+        await expectAuthenticationRequiredResponse(
+          await fetch(plannerUrl, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({
+              projectId: createdProject.projectId,
+              goal: "Plan the first release candidate",
+            }),
+          }),
+        );
+
+        const createPlanResponse = await fetch(plannerUrl, {
+          method: "POST",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            projectId: createdProject.projectId,
+            goal: "Plan the first release candidate",
+          }),
+        });
+        const createPlanBody = (await createPlanResponse.json()) as {
+          plan?: {
+            runId?: string;
+            summary?: string;
+            projectManagerRoleKey?: string;
+            tasks?: Array<{ ownerRole?: string }>;
+          };
+          error?: string;
+        };
+
+        expect(createPlanResponse.status).toBe(201);
+        expectNoStoreCacheControl(createPlanResponse);
+        expect(createPlanBody.plan?.runId).toBeTypeOf("string");
+        expect(createPlanBody.plan?.summary).toContain("release candidate");
+        expect(createPlanBody.plan?.projectManagerRoleKey).toBe("project_manager");
+        expect(createPlanBody.plan?.tasks?.map((task) => task.ownerRole)).toEqual([
+          "frontend_agent",
+          "backend_agent",
+          "reviewer",
+        ]);
+
+        const timelineResponse = await fetch(
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/messages`,
+          {
+            headers: withSessionCookie(sessionCookie),
+          },
+        );
+        const timelineBody = (await timelineResponse.json()) as {
+          messages?: Array<{
+            actorType?: string;
+            actorId?: string | null;
+            content?: string;
+          }>;
+        };
+
+        expect(timelineResponse.status).toBe(200);
+        expectNoStoreCacheControl(timelineResponse);
+        expect(timelineBody.messages).toHaveLength(2);
+        expect(timelineBody.messages?.[0]).toMatchObject({
+          actorType: "user",
+          actorId: "owner",
+          content: "Plan the first release candidate",
+        });
+        expect(timelineBody.messages?.[1]).toMatchObject({
+          actorType: "agent",
+          actorId: "project_manager",
+        });
+        expect(timelineBody.messages?.[1]?.content).toContain(
+          "Project Manager plan for:",
+        );
+
+        const landingResponse = await fetch(runtime.baseUrl, {
+          headers: withSessionCookie(sessionCookie),
+        });
+        const landingPage = await landingResponse.text();
+
+        expect(landingResponse.status).toBe(200);
+        expect(landingPage).toContain("Create plan");
+      } finally {
+        await runtime.stop();
+        await cleanup();
+      }
+    },
+    75_000,
+  );
+
+  it(
     "adds Secure to session cookies when auth requests are forwarded as HTTPS",
     async () => {
       const { databaseFilePath, cleanup } = await createRuntimeDatabaseFilePath();
