@@ -241,7 +241,9 @@ export interface ProjectManagerPlanRecord {
   readonly workspaceId: string;
   readonly runId: string;
   readonly goal: string;
+  readonly workflowCommand: "plan" | "implement" | "review" | "integrate";
   readonly summary: string;
+  readonly statusUpdate: string;
   readonly projectManagerRoleKey: string;
   readonly projectManagerDisplayName: string;
   readonly createdAt: string;
@@ -2255,7 +2257,9 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
         workspaceId,
         runId,
         goal,
+        workflowCommand: plan.workflowCommand,
         summary: plan.summary,
+        statusUpdate: plan.statusUpdate,
         projectManagerRoleKey: plan.projectManagerRoleKey,
         projectManagerDisplayName: plan.projectManagerDisplayName,
         createdAt,
