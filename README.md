@@ -87,6 +87,8 @@ Current runtime behavior:
 - Workspace shell and project/timeline APIs are protected: unauthenticated requests to `/`, `GET/POST /api/projects`, and `GET/POST /api/workspaces/:workspaceId/messages` require a login session.
 - Login issues an `HttpOnly` local session cookie (`SameSite=Lax`) that persists across browser refreshes while the runtime stays up.
 - Session state is in-memory for now, so restarting the web runtime requires signing in again.
+- The `Assigned Agents` section now exposes persistent provider/model/agent-role configuration backed by SQLite and served through `GET/PUT /api/settings/agent-configuration`.
+- Provider/model/role settings are seeded with durable defaults on first run, survive restarts, and are intended for upcoming PM planning and task-assignment flows.
 - The web runtime now serves project APIs at `GET/POST /api/projects`, creating one persistent workspace mapping per project.
 - The landing UI supports project creation, project selection, and timeline loading for the selected project's workspace.
 - The web runtime now persists workspace timeline messages in SQLite (`orqis.db`) and serves timeline APIs at `GET/POST /api/workspaces/:workspaceId/messages`.

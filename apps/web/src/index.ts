@@ -10,6 +10,7 @@ import type { AddressInfo } from "node:net";
 import {
   createWorkspaceTimelineStore,
   type AppendWorkspaceTimelineMessageInput,
+  type SaveAgentConfigurationInput,
   type WorkspaceMessageActorType,
   type WorkspaceTimelineStore,
   type WorkspaceTimelineStoreOptions,
@@ -23,6 +24,7 @@ const MAX_REQUEST_BODY_BYTES = 64 * 1024;
 const LOGIN_PATH = "/login";
 const SESSION_PATH = "/api/session";
 const PROJECTS_PATH = "/api/projects";
+const AGENT_CONFIGURATION_PATH = "/api/settings/agent-configuration";
 const WORKSPACE_MESSAGES_PATH_PATTERN = /^\/api\/workspaces\/([^/]+)\/messages$/;
 const WORKSPACE_MESSAGE_ACTOR_TYPES = ["user", "agent", "system"] as const;
 const SESSION_COOKIE_NAME = "orqis_session";
@@ -671,6 +673,116 @@ function getWebAppHtml(): string {
       font-size: 0.78rem;
     }
 
+    .detail-card--config {
+      display: grid;
+      gap: 1rem;
+    }
+
+    .detail-card-header {
+      display: grid;
+      gap: 0.45rem;
+    }
+
+    .detail-card-header p + p {
+      margin-top: -0.1rem;
+    }
+
+    .config-form {
+      display: grid;
+      gap: 1rem;
+    }
+
+    .config-section {
+      display: grid;
+      gap: 0.7rem;
+      padding: 0.9rem;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(8, 12, 22, 0.42);
+    }
+
+    .config-section-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .config-section-header h4 {
+      margin: 0 0 0.2rem;
+      font-size: 0.95rem;
+    }
+
+    .config-section-header p {
+      margin: 0;
+      font-size: 0.8rem;
+    }
+
+    .config-list {
+      display: grid;
+      gap: 0.75rem;
+    }
+
+    .config-row {
+      display: grid;
+      gap: 0.7rem;
+      padding: 0.8rem;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(7, 10, 18, 0.52);
+    }
+
+    .config-row-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.65rem;
+      flex-wrap: wrap;
+    }
+
+    .config-row-header strong {
+      font-size: 0.83rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--text-soft);
+    }
+
+    .config-row-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.7rem;
+    }
+
+    .config-row-grid--single {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .config-actions {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+    }
+
+    .config-actions button {
+      min-width: 140px;
+    }
+
+    .config-helper {
+      margin: 0;
+      color: var(--text-soft);
+      font-size: 0.75rem;
+      line-height: 1.45;
+    }
+
+    .config-empty {
+      margin: 0;
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      line-height: 1.45;
+    }
+
     .composer-shell {
       border-top: 1px solid var(--panel-border);
       background: rgba(14, 19, 31, 0.93);
@@ -778,6 +890,10 @@ function getWebAppHtml(): string {
       }
 
       .composer-topline {
+        grid-template-columns: 1fr;
+      }
+
+      .config-row-grid {
         grid-template-columns: 1fr;
       }
     }
@@ -922,6 +1038,32 @@ function getWebAppHtml(): string {
 
     const projectsUrl = "/api/projects";
     const sessionUrl = "/api/session";
+    const agentConfigurationUrl = "${AGENT_CONFIGURATION_PATH}";
+
+    const createEmptyProvider = () => ({
+      providerKey: "",
+      displayName: "",
+      baseUrl: "",
+    });
+
+    const createEmptyModel = () => ({
+      modelKey: "",
+      providerKey: "",
+      displayName: "",
+    });
+
+    const createEmptyAgentRole = () => ({
+      roleKey: "",
+      displayName: "",
+      modelKey: "",
+      responsibility: "",
+    });
+
+    const createEmptyAgentConfiguration = () => ({
+      providers: [],
+      models: [],
+      agentRoles: [],
+    });
 
     const viewMeta = {
       "main-chat": {
@@ -957,7 +1099,7 @@ function getWebAppHtml(): string {
       "assigned-agents": {
         context: "Section",
         title: "Assigned Agents",
-        subtitle: "Live ownership roster for the current workspace.",
+        subtitle: "Persistent provider, model, and role settings for Project Manager planning and task assignment.",
         timeline: false,
       },
     };
@@ -965,10 +1107,150 @@ function getWebAppHtml(): string {
     let projects = [];
     let selectedProjectId = "";
     let activeViewId = "main-chat";
+    let agentConfiguration = null;
+    let agentConfigurationLoading = false;
+    let agentConfigurationError = "";
 
     const setStatus = (message, isError = false) => {
       status.textContent = message;
       status.dataset.variant = isError ? "error" : "info";
+    };
+
+    const cloneAgentConfiguration = (configuration) => {
+      const source = configuration ?? createEmptyAgentConfiguration();
+
+      return {
+        providers: Array.isArray(source.providers)
+          ? source.providers.map((provider) => ({
+            providerKey:
+              typeof provider?.providerKey === "string" ? provider.providerKey : "",
+            displayName:
+              typeof provider?.displayName === "string" ? provider.displayName : "",
+            baseUrl: typeof provider?.baseUrl === "string" ? provider.baseUrl : "",
+          }))
+          : [],
+        models: Array.isArray(source.models)
+          ? source.models.map((model) => ({
+            modelKey: typeof model?.modelKey === "string" ? model.modelKey : "",
+            providerKey:
+              typeof model?.providerKey === "string" ? model.providerKey : "",
+            displayName:
+              typeof model?.displayName === "string" ? model.displayName : "",
+          }))
+          : [],
+        agentRoles: Array.isArray(source.agentRoles)
+          ? source.agentRoles.map((agentRole) => ({
+            roleKey:
+              typeof agentRole?.roleKey === "string" ? agentRole.roleKey : "",
+            displayName:
+              typeof agentRole?.displayName === "string"
+                ? agentRole.displayName
+                : "",
+            modelKey:
+              typeof agentRole?.modelKey === "string" ? agentRole.modelKey : "",
+            responsibility:
+              typeof agentRole?.responsibility === "string"
+                ? agentRole.responsibility
+                : "",
+          }))
+          : [],
+      };
+    };
+
+    const normalizeAgentConfigurationDraft = (configuration) => {
+      const draft = cloneAgentConfiguration(configuration);
+      const firstProviderKey = draft.providers[0]?.providerKey ?? "";
+      const availableProviderKeys = new Set(
+        draft.providers
+          .map((provider) => provider.providerKey.trim())
+          .filter((providerKey) => providerKey.length > 0),
+      );
+
+      draft.models = draft.models.map((model) => {
+        const providerKey = model.providerKey.trim();
+
+        return {
+          modelKey: model.modelKey,
+          displayName: model.displayName,
+          providerKey: availableProviderKeys.has(providerKey)
+            ? providerKey
+            : firstProviderKey,
+        };
+      });
+
+      const firstModelKey = draft.models[0]?.modelKey ?? "";
+      const availableModelKeys = new Set(
+        draft.models
+          .map((model) => model.modelKey.trim())
+          .filter((modelKey) => modelKey.length > 0),
+      );
+
+      draft.agentRoles = draft.agentRoles.map((agentRole) => {
+        const modelKey = agentRole.modelKey.trim();
+
+        return {
+          roleKey: agentRole.roleKey,
+          displayName: agentRole.displayName,
+          responsibility: agentRole.responsibility,
+          modelKey: availableModelKeys.has(modelKey) ? modelKey : firstModelKey,
+        };
+      });
+
+      return draft;
+    };
+
+    const readFieldValue = (container, fieldName) => {
+      const field = container.querySelector("[data-field='" + fieldName + "']");
+
+      if (
+        field === null ||
+        (field.tagName !== "INPUT" &&
+          field.tagName !== "SELECT" &&
+          field.tagName !== "TEXTAREA")
+      ) {
+        return "";
+      }
+
+      return field.value;
+    };
+
+    const readAgentConfigurationDraftFromForm = () => {
+      const form = detailRegion.querySelector("[data-agent-config-form='true']");
+
+      if (form === null) {
+        return normalizeAgentConfigurationDraft(agentConfiguration);
+      }
+
+      const providers = Array.from(
+        form.querySelectorAll("[data-provider-row='true']"),
+      ).map((row) => ({
+        providerKey: readFieldValue(row, "providerKey").trim(),
+        displayName: readFieldValue(row, "displayName").trim(),
+        baseUrl: readFieldValue(row, "baseUrl").trim(),
+      }));
+
+      const models = Array.from(
+        form.querySelectorAll("[data-model-row='true']"),
+      ).map((row) => ({
+        modelKey: readFieldValue(row, "modelKey").trim(),
+        providerKey: readFieldValue(row, "providerKey").trim(),
+        displayName: readFieldValue(row, "displayName").trim(),
+      }));
+
+      const agentRoles = Array.from(
+        form.querySelectorAll("[data-agent-role-row='true']"),
+      ).map((row) => ({
+        roleKey: readFieldValue(row, "roleKey").trim(),
+        displayName: readFieldValue(row, "displayName").trim(),
+        modelKey: readFieldValue(row, "modelKey").trim(),
+        responsibility: readFieldValue(row, "responsibility").trim(),
+      }));
+
+      return normalizeAgentConfigurationDraft({
+        providers,
+        models,
+        agentRoles,
+      });
     };
 
     const renderMessages = (messages) => {
@@ -1009,6 +1291,454 @@ function getWebAppHtml(): string {
       }
     };
 
+    const createFieldLabel = (labelText) => {
+      const label = document.createElement("label");
+      label.textContent = labelText;
+      return label;
+    };
+
+    const createTextInputField = (labelText, fieldName, value, placeholder = "") => {
+      const label = createFieldLabel(labelText);
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = value;
+      input.placeholder = placeholder;
+      input.dataset.field = fieldName;
+      label.appendChild(input);
+      return label;
+    };
+
+    const createTextAreaField = (labelText, fieldName, value, placeholder = "") => {
+      const label = createFieldLabel(labelText);
+      const textarea = document.createElement("textarea");
+      textarea.value = value;
+      textarea.placeholder = placeholder;
+      textarea.dataset.field = fieldName;
+      label.appendChild(textarea);
+      return label;
+    };
+
+    const createSelectField = (
+      labelText,
+      fieldName,
+      value,
+      options,
+      emptyLabel,
+    ) => {
+      const label = createFieldLabel(labelText);
+      const select = document.createElement("select");
+      select.dataset.field = fieldName;
+
+      if (!Array.isArray(options) || options.length === 0) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = emptyLabel;
+        select.appendChild(option);
+      } else {
+        for (const optionMeta of options) {
+          const option = document.createElement("option");
+          option.value = optionMeta.value;
+          option.textContent = optionMeta.label;
+          select.appendChild(option);
+        }
+      }
+
+      select.value = value;
+      label.appendChild(select);
+      return label;
+    };
+
+    const createConfigSection = (title, description) => {
+      const section = document.createElement("section");
+      section.className = "config-section";
+      const header = document.createElement("div");
+      header.className = "config-section-header";
+      const copy = document.createElement("div");
+      const heading = document.createElement("h4");
+      heading.textContent = title;
+      const body = document.createElement("p");
+      body.textContent = description;
+      copy.append(heading, body);
+      header.appendChild(copy);
+      section.appendChild(header);
+      return { header, section };
+    };
+
+    const renderAgentConfigurationDetail = () => {
+      const draft = normalizeAgentConfigurationDraft(agentConfiguration);
+      detailRegion.innerHTML = "";
+
+      const card = document.createElement("div");
+      card.className = "detail-card detail-card--config";
+
+      const header = document.createElement("div");
+      header.className = "detail-card-header";
+      const title = document.createElement("h3");
+      title.textContent = "Assigned Agents";
+      const summary = document.createElement("p");
+      summary.textContent =
+        "Configure the durable provider, model, and role mapping that future Project Manager planning and task assignment flows will consume.";
+      const note = document.createElement("p");
+      note.className = "config-helper";
+      note.textContent =
+        "Minimum contract: at least one provider, one model, and two agent roles.";
+      header.append(title, summary, note);
+
+      const form = document.createElement("form");
+      form.className = "config-form";
+      form.setAttribute("data-agent-config-form", "true");
+
+      const providerSection = createConfigSection(
+        "Providers",
+        "Provider keys identify runtime backends. Base URL is optional and should point at an HTTP API endpoint when used.",
+      );
+      const providerList = document.createElement("div");
+      providerList.className = "config-list";
+
+      if (draft.providers.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "config-empty";
+        empty.textContent = "No providers yet. Add one to define the runtime backend.";
+        providerList.appendChild(empty);
+      } else {
+        draft.providers.forEach((provider, index) => {
+          const row = document.createElement("div");
+          row.className = "config-row";
+          row.setAttribute("data-provider-row", "true");
+          const rowHeader = document.createElement("div");
+          rowHeader.className = "config-row-header";
+          const rowLabel = document.createElement("strong");
+          rowLabel.textContent = "Provider " + String(index + 1);
+          const removeButton = document.createElement("button");
+          removeButton.type = "button";
+          removeButton.className = "secondary";
+          removeButton.textContent = "Remove";
+          removeButton.addEventListener("click", () => {
+            const nextDraft = readAgentConfigurationDraftFromForm();
+            nextDraft.providers.splice(index, 1);
+            agentConfiguration = normalizeAgentConfigurationDraft(nextDraft);
+            if (activeViewId === "assigned-agents") {
+              renderAgentConfigurationDetail();
+            }
+          });
+          rowHeader.append(rowLabel, removeButton);
+          const grid = document.createElement("div");
+          grid.className = "config-row-grid";
+          grid.append(
+            createTextInputField(
+              "Provider key",
+              "providerKey",
+              provider.providerKey,
+              "openai",
+            ),
+            createTextInputField(
+              "Display name",
+              "displayName",
+              provider.displayName,
+              "OpenAI",
+            ),
+            createTextInputField(
+              "Base URL (optional)",
+              "baseUrl",
+              provider.baseUrl,
+              "https://api.openai.com/v1",
+            ),
+          );
+          row.append(rowHeader, grid);
+          providerList.appendChild(row);
+        });
+      }
+
+      const addProviderButton = document.createElement("button");
+      addProviderButton.type = "button";
+      addProviderButton.className = "secondary";
+      addProviderButton.textContent = "Add provider";
+      addProviderButton.addEventListener("click", () => {
+        const nextDraft = readAgentConfigurationDraftFromForm();
+        nextDraft.providers.push(createEmptyProvider());
+        agentConfiguration = normalizeAgentConfigurationDraft(nextDraft);
+        if (activeViewId === "assigned-agents") {
+          renderAgentConfigurationDetail();
+        }
+      });
+      providerSection.header.appendChild(addProviderButton);
+      providerSection.section.appendChild(providerList);
+
+      const modelSection = createConfigSection(
+        "Models",
+        "Models bind a provider key to the concrete model name used by agent roles.",
+      );
+      const modelList = document.createElement("div");
+      modelList.className = "config-list";
+      const providerOptions = draft.providers.map((provider) => ({
+        value: provider.providerKey,
+        label: provider.displayName.trim().length > 0
+          ? provider.displayName + " (" + provider.providerKey + ")"
+          : provider.providerKey,
+      }));
+
+      if (draft.models.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "config-empty";
+        empty.textContent = "No models yet. Add one after defining a provider.";
+        modelList.appendChild(empty);
+      } else {
+        draft.models.forEach((model, index) => {
+          const row = document.createElement("div");
+          row.className = "config-row";
+          row.setAttribute("data-model-row", "true");
+          const rowHeader = document.createElement("div");
+          rowHeader.className = "config-row-header";
+          const rowLabel = document.createElement("strong");
+          rowLabel.textContent = "Model " + String(index + 1);
+          const removeButton = document.createElement("button");
+          removeButton.type = "button";
+          removeButton.className = "secondary";
+          removeButton.textContent = "Remove";
+          removeButton.addEventListener("click", () => {
+            const nextDraft = readAgentConfigurationDraftFromForm();
+            nextDraft.models.splice(index, 1);
+            agentConfiguration = normalizeAgentConfigurationDraft(nextDraft);
+            if (activeViewId === "assigned-agents") {
+              renderAgentConfigurationDetail();
+            }
+          });
+          rowHeader.append(rowLabel, removeButton);
+          const grid = document.createElement("div");
+          grid.className = "config-row-grid";
+          grid.append(
+            createTextInputField(
+              "Model key",
+              "modelKey",
+              model.modelKey,
+              "gpt-5",
+            ),
+            createTextInputField(
+              "Display name",
+              "displayName",
+              model.displayName,
+              "GPT-5",
+            ),
+            createSelectField(
+              "Provider",
+              "providerKey",
+              model.providerKey,
+              providerOptions,
+              "Add a provider first",
+            ),
+          );
+          row.append(rowHeader, grid);
+          modelList.appendChild(row);
+        });
+      }
+
+      const addModelButton = document.createElement("button");
+      addModelButton.type = "button";
+      addModelButton.className = "secondary";
+      addModelButton.textContent = "Add model";
+      addModelButton.addEventListener("click", () => {
+        const nextDraft = readAgentConfigurationDraftFromForm();
+        nextDraft.models.push(createEmptyModel());
+        agentConfiguration = normalizeAgentConfigurationDraft(nextDraft);
+        if (activeViewId === "assigned-agents") {
+          renderAgentConfigurationDetail();
+        }
+      });
+      modelSection.header.appendChild(addModelButton);
+      modelSection.section.appendChild(modelList);
+
+      const agentRoleSection = createConfigSection(
+        "Agent roles",
+        "Role keys align PM task ownership and execution routing with a saved model choice and responsibility summary.",
+      );
+      const agentRoleList = document.createElement("div");
+      agentRoleList.className = "config-list";
+      const modelOptions = draft.models.map((model) => ({
+        value: model.modelKey,
+        label: model.displayName.trim().length > 0
+          ? model.displayName + " (" + model.modelKey + ")"
+          : model.modelKey,
+      }));
+
+      if (draft.agentRoles.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "config-empty";
+        empty.textContent = "No agent roles yet. Add at least two before saving.";
+        agentRoleList.appendChild(empty);
+      } else {
+        draft.agentRoles.forEach((agentRole, index) => {
+          const row = document.createElement("div");
+          row.className = "config-row";
+          row.setAttribute("data-agent-role-row", "true");
+          const rowHeader = document.createElement("div");
+          rowHeader.className = "config-row-header";
+          const rowLabel = document.createElement("strong");
+          rowLabel.textContent = "Agent role " + String(index + 1);
+          const removeButton = document.createElement("button");
+          removeButton.type = "button";
+          removeButton.className = "secondary";
+          removeButton.textContent = "Remove";
+          removeButton.addEventListener("click", () => {
+            const nextDraft = readAgentConfigurationDraftFromForm();
+            nextDraft.agentRoles.splice(index, 1);
+            agentConfiguration = normalizeAgentConfigurationDraft(nextDraft);
+            if (activeViewId === "assigned-agents") {
+              renderAgentConfigurationDetail();
+            }
+          });
+          rowHeader.append(rowLabel, removeButton);
+          const grid = document.createElement("div");
+          grid.className = "config-row-grid";
+          grid.append(
+            createTextInputField(
+              "Role key",
+              "roleKey",
+              agentRole.roleKey,
+              "project_manager",
+            ),
+            createTextInputField(
+              "Display name",
+              "displayName",
+              agentRole.displayName,
+              "Project Manager",
+            ),
+            createSelectField(
+              "Model",
+              "modelKey",
+              agentRole.modelKey,
+              modelOptions,
+              "Add a model first",
+            ),
+          );
+          const responsibilityGrid = document.createElement("div");
+          responsibilityGrid.className = "config-row-grid config-row-grid--single";
+          responsibilityGrid.append(
+            createTextAreaField(
+              "Responsibility",
+              "responsibility",
+              agentRole.responsibility,
+              "Describe what this role owns during planning and execution.",
+            ),
+          );
+          row.append(rowHeader, grid, responsibilityGrid);
+          agentRoleList.appendChild(row);
+        });
+      }
+
+      const addAgentRoleButton = document.createElement("button");
+      addAgentRoleButton.type = "button";
+      addAgentRoleButton.className = "secondary";
+      addAgentRoleButton.textContent = "Add role";
+      addAgentRoleButton.addEventListener("click", () => {
+        const nextDraft = readAgentConfigurationDraftFromForm();
+        nextDraft.agentRoles.push(createEmptyAgentRole());
+        agentConfiguration = normalizeAgentConfigurationDraft(nextDraft);
+        if (activeViewId === "assigned-agents") {
+          renderAgentConfigurationDetail();
+        }
+      });
+      agentRoleSection.header.appendChild(addAgentRoleButton);
+      agentRoleSection.section.appendChild(agentRoleList);
+
+      const actions = document.createElement("div");
+      actions.className = "config-actions";
+      const saveButton = document.createElement("button");
+      saveButton.type = "button";
+      saveButton.textContent = "Save configuration";
+      const reloadButton = document.createElement("button");
+      reloadButton.type = "button";
+      reloadButton.className = "secondary";
+      reloadButton.textContent = "Reload saved settings";
+      reloadButton.addEventListener("click", async () => {
+        try {
+          await loadAgentConfiguration(true);
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : String(error), true);
+        }
+      });
+      saveButton.addEventListener("click", async () => {
+        const nextDraft = readAgentConfigurationDraftFromForm();
+        saveButton.disabled = true;
+        reloadButton.disabled = true;
+        setStatus("Saving agent configuration...");
+
+        try {
+          const response = await fetch(agentConfigurationUrl, {
+            method: "PUT",
+            headers: {
+              "content-type": "application/json",
+            },
+            body: JSON.stringify(nextDraft),
+          });
+          const payload = await response.json();
+
+          if (!response.ok) {
+            throw new Error(payload.error ?? "Failed to save agent configuration.");
+          }
+
+          agentConfiguration = normalizeAgentConfigurationDraft(
+            payload.configuration,
+          );
+
+          if (activeViewId === "assigned-agents") {
+            renderAgentConfigurationDetail();
+          }
+
+          setStatus("Agent configuration saved.");
+        } catch (error) {
+          saveButton.disabled = false;
+          reloadButton.disabled = false;
+          setStatus(error instanceof Error ? error.message : String(error), true);
+        }
+      });
+      actions.append(saveButton, reloadButton);
+
+      form.append(
+        providerSection.section,
+        modelSection.section,
+        agentRoleSection.section,
+        actions,
+      );
+      card.append(header, form);
+      detailRegion.appendChild(card);
+    };
+
+    const loadAgentConfiguration = async (announce = false) => {
+      agentConfigurationError = "";
+      agentConfigurationLoading = true;
+
+      if (activeViewId === "assigned-agents") {
+        renderDetailView();
+      }
+
+      try {
+        const response = await fetch(agentConfigurationUrl);
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error ?? "Failed to load agent configuration.");
+        }
+
+        agentConfiguration = normalizeAgentConfigurationDraft(
+          payload.configuration,
+        );
+
+        if (announce) {
+          setStatus("Assigned-agent configuration loaded.");
+        }
+      } catch (error) {
+        agentConfigurationError =
+          error instanceof Error ? error.message : String(error);
+        throw error;
+      } finally {
+        agentConfigurationLoading = false;
+
+        if (activeViewId === "assigned-agents") {
+          renderDetailView();
+        }
+      }
+    };
+
     const renderDetailView = () => {
       if (activeViewId === "files") {
         detailRegion.innerHTML =
@@ -1017,8 +1747,26 @@ function getWebAppHtml(): string {
       }
 
       if (activeViewId === "assigned-agents") {
-        detailRegion.innerHTML =
-          '<div class="detail-card"><h3>Assigned Agents</h3><p>Role routing for this workspace.</p><ul class="agent-list"><li><strong>Project Manager</strong><span>Coordinates plans, assignments, and approvals.</span></li><li><strong>Frontend Agent</strong><span>Owns UI shell and interaction delivery.</span></li><li><strong>Backend Agent</strong><span>Owns API contracts, state transitions, and persistence behavior.</span></li><li><strong>Reviewer</strong><span>Validates correctness, tests, and release readiness.</span></li></ul></div>';
+        if (agentConfigurationLoading) {
+          detailRegion.innerHTML =
+            '<div class="detail-card"><h3>Assigned Agents</h3><p>Loading durable provider, model, and role settings...</p></div>';
+          return;
+        }
+
+        if (agentConfigurationError.length > 0 && agentConfiguration === null) {
+          detailRegion.innerHTML = "";
+          const errorCard = document.createElement("div");
+          errorCard.className = "detail-card";
+          const title = document.createElement("h3");
+          title.textContent = "Assigned Agents";
+          const body = document.createElement("p");
+          body.textContent = agentConfigurationError;
+          errorCard.append(title, body);
+          detailRegion.appendChild(errorCard);
+          return;
+        }
+
+        renderAgentConfigurationDetail();
         return;
       }
 
@@ -1355,11 +2103,22 @@ function getWebAppHtml(): string {
         return;
       }
 
+      const shouldLoadAgentConfiguration = viewId === "assigned-agents";
+
+      if (shouldLoadAgentConfiguration) {
+        agentConfigurationLoading = true;
+      }
+
       activeViewId = viewId;
       applyView();
 
       if (isTimelineView(activeViewId)) {
         await reloadTimeline();
+        return;
+      }
+
+      if (shouldLoadAgentConfiguration) {
+        await loadAgentConfiguration(true);
         return;
       }
 
@@ -1808,6 +2567,191 @@ function parseCreateSessionBody(
     ok: true,
     value: {
       actorId,
+    },
+  };
+}
+
+function parseAgentConfigurationBody(
+  body: unknown,
+):
+  | { ok: true; value: SaveAgentConfigurationInput }
+  | { ok: false; error: string } {
+  if (!isRecord(body)) {
+    return {
+      ok: false,
+      error: "Agent configuration payload must be a JSON object.",
+    };
+  }
+
+  if (!Array.isArray(body.providers)) {
+    return {
+      ok: false,
+      error: "providers must be an array.",
+    };
+  }
+
+  if (!Array.isArray(body.models)) {
+    return {
+      ok: false,
+      error: "models must be an array.",
+    };
+  }
+
+  if (!Array.isArray(body.agentRoles)) {
+    return {
+      ok: false,
+      error: "agentRoles must be an array.",
+    };
+  }
+
+  const providers = [] as Array<SaveAgentConfigurationInput["providers"][number]>;
+
+  for (const [index, provider] of body.providers.entries()) {
+    if (!isRecord(provider)) {
+      return {
+        ok: false,
+        error: `providers[${index}] must be a JSON object.`,
+      };
+    }
+
+    const providerKey = normalizeOptionalString(provider.providerKey);
+    const displayName = normalizeOptionalString(provider.displayName);
+    const baseUrl =
+      provider.baseUrl === null || provider.baseUrl === undefined
+        ? provider.baseUrl
+        : normalizeOptionalString(provider.baseUrl);
+
+    if (providerKey === undefined) {
+      return {
+        ok: false,
+        error: `providers[${index}].providerKey must be a non-empty string.`,
+      };
+    }
+
+    if (displayName === undefined) {
+      return {
+        ok: false,
+        error: `providers[${index}].displayName must be a non-empty string.`,
+      };
+    }
+
+    if (
+      provider.baseUrl !== null &&
+      provider.baseUrl !== undefined &&
+      typeof provider.baseUrl !== "string"
+    ) {
+      return {
+        ok: false,
+        error: `providers[${index}].baseUrl must be a string when provided.`,
+      };
+    }
+
+    providers.push({
+      providerKey,
+      displayName,
+      baseUrl: baseUrl ?? null,
+    });
+  }
+
+  const models = [] as Array<SaveAgentConfigurationInput["models"][number]>;
+
+  for (const [index, model] of body.models.entries()) {
+    if (!isRecord(model)) {
+      return {
+        ok: false,
+        error: `models[${index}] must be a JSON object.`,
+      };
+    }
+
+    const modelKey = normalizeOptionalString(model.modelKey);
+    const providerKey = normalizeOptionalString(model.providerKey);
+    const displayName = normalizeOptionalString(model.displayName);
+
+    if (modelKey === undefined) {
+      return {
+        ok: false,
+        error: `models[${index}].modelKey must be a non-empty string.`,
+      };
+    }
+
+    if (providerKey === undefined) {
+      return {
+        ok: false,
+        error: `models[${index}].providerKey must be a non-empty string.`,
+      };
+    }
+
+    if (displayName === undefined) {
+      return {
+        ok: false,
+        error: `models[${index}].displayName must be a non-empty string.`,
+      };
+    }
+
+    models.push({
+      modelKey,
+      providerKey,
+      displayName,
+    });
+  }
+
+  const agentRoles = [] as Array<SaveAgentConfigurationInput["agentRoles"][number]>;
+
+  for (const [index, agentRole] of body.agentRoles.entries()) {
+    if (!isRecord(agentRole)) {
+      return {
+        ok: false,
+        error: `agentRoles[${index}] must be a JSON object.`,
+      };
+    }
+
+    const roleKey = normalizeOptionalString(agentRole.roleKey);
+    const displayName = normalizeOptionalString(agentRole.displayName);
+    const modelKey = normalizeOptionalString(agentRole.modelKey);
+    const responsibility = normalizeOptionalString(agentRole.responsibility);
+
+    if (roleKey === undefined) {
+      return {
+        ok: false,
+        error: `agentRoles[${index}].roleKey must be a non-empty string.`,
+      };
+    }
+
+    if (displayName === undefined) {
+      return {
+        ok: false,
+        error: `agentRoles[${index}].displayName must be a non-empty string.`,
+      };
+    }
+
+    if (modelKey === undefined) {
+      return {
+        ok: false,
+        error: `agentRoles[${index}].modelKey must be a non-empty string.`,
+      };
+    }
+
+    if (responsibility === undefined) {
+      return {
+        ok: false,
+        error: `agentRoles[${index}].responsibility must be a non-empty string.`,
+      };
+    }
+
+    agentRoles.push({
+      roleKey,
+      displayName,
+      modelKey,
+      responsibility,
+    });
+  }
+
+  return {
+    ok: true,
+    value: {
+      providers,
+      models,
+      agentRoles,
     },
   };
 }
@@ -2333,6 +3277,98 @@ async function handleProjectsRoute(
   });
 }
 
+async function handleAgentConfigurationRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  context: RuntimeRequestContext,
+): Promise<void> {
+  if (request.method === "GET") {
+    try {
+      const configuration = context.timelineStore.getAgentConfiguration();
+
+      writeJson(response, 200, {
+        configuration,
+      });
+      return;
+    } catch (error) {
+      if (error instanceof WorkspaceTimelineValidationError) {
+        writeJson(response, 400, {
+          error: error.message,
+        });
+        return;
+      }
+
+      throw error;
+    }
+  }
+
+  if (request.method === "PUT") {
+    let payload;
+
+    try {
+      payload = await readJsonRequestBody(request);
+    } catch (error) {
+      if (error instanceof RequestBodyTooLargeError) {
+        writeJson(response, 413, {
+          error: error.message,
+        });
+        return;
+      }
+
+      if (error instanceof RequestBodyJsonParseError) {
+        writeJson(response, 400, {
+          error: error.message,
+        });
+        return;
+      }
+
+      throw error;
+    }
+
+    const parsedBody = parseAgentConfigurationBody(payload);
+
+    if (!parsedBody.ok) {
+      writeJson(response, 400, {
+        error: parsedBody.error,
+      });
+      return;
+    }
+
+    try {
+      const configuration = context.timelineStore.saveAgentConfiguration(
+        parsedBody.value,
+      );
+
+      writeJson(response, 200, {
+        configuration,
+      });
+      return;
+    } catch (error) {
+      if (error instanceof WorkspaceTimelineValidationError) {
+        writeJson(response, 400, {
+          error: error.message,
+        });
+        return;
+      }
+
+      if (error instanceof WorkspaceTimelineConflictError) {
+        writeJson(response, 409, {
+          error: error.message,
+        });
+        return;
+      }
+
+      throw error;
+    }
+  }
+
+  response.setHeader("allow", "GET, PUT");
+  writeJson(response, 405, {
+    error: "Method Not Allowed",
+    method: request.method ?? "UNKNOWN",
+  });
+}
+
 async function handleWorkspaceMessagesRoute(
   request: IncomingMessage,
   response: ServerResponse,
@@ -2482,6 +3518,11 @@ async function handleRequest(
 
   if (pathname === PROJECTS_PATH) {
     await handleProjectsRoute(request, response, context);
+    return;
+  }
+
+  if (pathname === AGENT_CONFIGURATION_PATH) {
+    await handleAgentConfigurationRoute(request, response, context);
     return;
   }
 

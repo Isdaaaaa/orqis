@@ -140,6 +140,9 @@ describe("@orqis/db migration SQL", () => {
     const requiredTables = [
       "projects",
       "workspaces",
+      "provider_configs",
+      "model_configs",
+      "agent_profiles",
       "messages",
       "tasks",
       "approvals",
@@ -150,6 +153,74 @@ describe("@orqis/db migration SQL", () => {
     for (const tableName of requiredTables) {
       expect(migrationSql).toContain(`CREATE TABLE \`${tableName}\``);
     }
+  });
+
+  it("defines provider, model, and agent-profile configuration tables with relational links", async () => {
+    const providerConfigsTableSql = extractTableSql(
+      migrationSql,
+      "provider_configs",
+    );
+    const modelConfigsTableSql = extractTableSql(migrationSql, "model_configs");
+    const agentProfilesTableSql = extractTableSql(migrationSql, "agent_profiles");
+
+    expect(providerConfigsTableSql).toContain("`provider_key` text PRIMARY KEY NOT NULL");
+    expect(providerConfigsTableSql).toContain("`display_name` text NOT NULL");
+    expect(providerConfigsTableSql).toContain("`base_url` text");
+    expect(migrationSql).toContain("CREATE INDEX `provider_configs_created_at_idx`");
+
+    expect(modelConfigsTableSql).toContain("`model_key` text PRIMARY KEY NOT NULL");
+    expect(modelConfigsTableSql).toContain("`provider_key` text NOT NULL");
+    expect(modelConfigsTableSql).toContain(
+      "FOREIGN KEY (`provider_key`) REFERENCES `provider_configs` (`provider_key`)",
+    );
+    expect(migrationSql).toContain(
+      "CREATE INDEX `model_configs_provider_key_created_at_idx`",
+    );
+
+    expect(agentProfilesTableSql).toContain("`role_key` text PRIMARY KEY NOT NULL");
+    expect(agentProfilesTableSql).toContain("`display_name` text NOT NULL");
+    expect(agentProfilesTableSql).toContain("`model_key` text NOT NULL");
+    expect(agentProfilesTableSql).toContain("`responsibility` text NOT NULL");
+    expect(agentProfilesTableSql).toContain(
+      "FOREIGN KEY (`model_key`) REFERENCES `model_configs` (`model_key`)",
+    );
+    expect(migrationSql).toContain(
+      "CREATE INDEX `agent_profiles_model_key_created_at_idx`",
+    );
+
+    await withDatabase((db) => {
+      db.run(
+        "INSERT INTO provider_configs (provider_key, display_name, base_url) VALUES (?, ?, ?)",
+        ["openai", "OpenAI", "https://api.openai.com/v1"],
+      );
+      db.run(
+        "INSERT INTO model_configs (model_key, provider_key, display_name) VALUES (?, ?, ?)",
+        ["gpt-5", "openai", "GPT-5"],
+      );
+      db.run(
+        "INSERT INTO agent_profiles (role_key, display_name, model_key, responsibility) VALUES (?, ?, ?, ?)",
+        [
+          "project_manager",
+          "Project Manager",
+          "gpt-5",
+          "Plans work and manages approvals",
+        ],
+      );
+
+      expect(() =>
+        db.run(
+          "INSERT INTO model_configs (model_key, provider_key, display_name) VALUES (?, ?, ?)",
+          ["claude-sonnet-4", "missing", "Claude Sonnet 4"],
+        ),
+      ).toThrow(/FOREIGN KEY constraint failed/);
+
+      expect(() =>
+        db.run(
+          "INSERT INTO agent_profiles (role_key, display_name, model_key, responsibility) VALUES (?, ?, ?, ?)",
+          ["reviewer", "Reviewer", "missing-model", "Reviews changes"],
+        ),
+      ).toThrow(/FOREIGN KEY constraint failed/);
+    });
   });
 
   it("uses connection-local SQL functions for audit actor and run correlation metadata", () => {
