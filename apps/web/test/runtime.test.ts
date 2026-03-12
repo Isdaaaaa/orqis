@@ -623,7 +623,9 @@ describe("@orqis/web runtime", () => {
         const createPlanBody = (await createPlanResponse.json()) as {
           plan?: {
             runId?: string;
+            workflowCommand?: string;
             summary?: string;
+            statusUpdate?: string;
             projectManagerRoleKey?: string;
             tasks?: Array<{ ownerRole?: string }>;
           };
@@ -633,7 +635,11 @@ describe("@orqis/web runtime", () => {
         expect(createPlanResponse.status).toBe(201);
         expectNoStoreCacheControl(createPlanResponse);
         expect(createPlanBody.plan?.runId).toBeTypeOf("string");
+        expect(createPlanBody.plan?.workflowCommand).toBe("plan");
         expect(createPlanBody.plan?.summary).toContain("release candidate");
+        expect(createPlanBody.plan?.statusUpdate).toContain(
+          "Planning workflow is complete",
+        );
         expect(createPlanBody.plan?.projectManagerRoleKey).toBe("project_manager");
         expect(createPlanBody.plan?.tasks?.map((task) => task.ownerRole)).toEqual([
           "frontend_agent",
@@ -670,6 +676,10 @@ describe("@orqis/web runtime", () => {
         expect(timelineBody.messages?.[1]?.content).toContain(
           "Project Manager plan for:",
         );
+        expect(timelineBody.messages?.[1]?.content).toContain(
+          "Workflow command: plan",
+        );
+        expect(timelineBody.messages?.[1]?.content).toContain("Status update:");
 
         const landingResponse = await fetch(runtime.baseUrl, {
           headers: withSessionCookie(sessionCookie),
@@ -678,6 +688,134 @@ describe("@orqis/web runtime", () => {
 
         expect(landingResponse.status).toBe(200);
         expect(landingPage).toContain("Create plan");
+      } finally {
+        await runtime.stop();
+        await cleanup();
+      }
+    },
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
+  );
+
+  it(
+    "routes implement/review/integrate planner commands to phase-specific PM workflows",
+    async () => {
+      const { databaseFilePath, cleanup } = await createRuntimeDatabaseFilePath();
+      const runtime = await startOrqisWebRuntime({
+        host: "127.0.0.1",
+        port: 0,
+        persistence: {
+          databaseFilePath,
+        },
+      });
+
+      try {
+        const sessionCookie = await createSessionCookie(runtime.baseUrl, "owner");
+
+        const createProjectResponse = await fetch(`${runtime.baseUrl}/api/projects`, {
+          method: "POST",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            name: "Planner Commands Runtime Project",
+          }),
+        });
+        const createProjectBody = (await createProjectResponse.json()) as {
+          project?: {
+            projectId: string;
+            workspaceId: string;
+          };
+        };
+        expect(createProjectResponse.status).toBe(201);
+
+        const createdProject = createProjectBody.project;
+
+        if (createdProject === undefined) {
+          throw new Error("expected project details for planner workflow command assertions");
+        }
+
+        const plannerUrl =
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/planner/runs`;
+
+        const postPlan = async (goal: string) => {
+          const response = await fetch(plannerUrl, {
+            method: "POST",
+            headers: withSessionCookie(sessionCookie, {
+              "content-type": "application/json",
+            }),
+            body: JSON.stringify({
+              projectId: createdProject.projectId,
+              goal,
+            }),
+          });
+          const body = (await response.json()) as {
+            plan?: {
+              workflowCommand?: string;
+              summary?: string;
+              statusUpdate?: string;
+              tasks?: Array<{ ownerRole?: string }>;
+              planMessage?: { content?: string };
+            };
+            error?: string;
+          };
+
+          return { response, body };
+        };
+
+        const implementationResult = await postPlan(
+          "implement: ship the workflow command runtime",
+        );
+        expect(implementationResult.response.status).toBe(201);
+        expectNoStoreCacheControl(implementationResult.response);
+        expect(implementationResult.body.plan?.workflowCommand).toBe("implement");
+        expect(implementationResult.body.plan?.summary).toContain(
+          "implementation workflow",
+        );
+        expect(
+          implementationResult.body.plan?.tasks?.map((task) => task.ownerRole).sort(),
+        ).toEqual(["backend_agent", "frontend_agent"]);
+        expect(implementationResult.body.plan?.statusUpdate).toContain(
+          "Implementation workflow is active",
+        );
+        expect(implementationResult.body.plan?.planMessage?.content).toContain(
+          "Workflow command: implement",
+        );
+
+        const reviewResult = await postPlan(
+          "review: ship the workflow command runtime",
+        );
+        expect(reviewResult.response.status).toBe(201);
+        expectNoStoreCacheControl(reviewResult.response);
+        expect(reviewResult.body.plan?.workflowCommand).toBe("review");
+        expect(reviewResult.body.plan?.summary).toContain("review workflow");
+        expect(reviewResult.body.plan?.tasks?.map((task) => task.ownerRole)).toEqual([
+          "reviewer",
+        ]);
+        expect(reviewResult.body.plan?.statusUpdate).toContain(
+          "Review workflow is active",
+        );
+        expect(reviewResult.body.plan?.planMessage?.content).toContain(
+          "Workflow command: review",
+        );
+
+        const integrationResult = await postPlan(
+          "integrate: ship the workflow command runtime",
+        );
+        expect(integrationResult.response.status).toBe(201);
+        expectNoStoreCacheControl(integrationResult.response);
+        expect(integrationResult.body.plan?.workflowCommand).toBe("integrate");
+        expect(integrationResult.body.plan?.summary).toContain(
+          "integration workflow",
+        );
+        expect(integrationResult.body.plan?.tasks?.map((task) => task.ownerRole)).toEqual([
+          "backend_agent",
+        ]);
+        expect(integrationResult.body.plan?.statusUpdate).toContain(
+          "Integration workflow is active",
+        );
+        expect(integrationResult.body.plan?.planMessage?.content).toContain(
+          "Workflow command: integrate",
+        );
       } finally {
         await runtime.stop();
         await cleanup();

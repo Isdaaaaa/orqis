@@ -37,7 +37,9 @@ describe("project manager planner service", () => {
     });
 
     expect(plan.projectManagerRoleKey).toBe("project_manager");
+    expect(plan.workflowCommand).toBe("plan");
     expect(plan.summary).toContain("persistent task approvals");
+    expect(plan.statusUpdate).toContain("Planning workflow is complete");
     expect(plan.steps).toHaveLength(3);
     expect(plan.tasks).toHaveLength(3);
     expect(plan.tasks.map((task) => task.ownerRole)).toEqual([
@@ -50,6 +52,8 @@ describe("project manager planner service", () => {
     expect(plan.tasks[1]?.title).toContain("runtime and persistence support");
     expect(plan.tasks[2]?.title).toContain("Validate the delivered work");
     expect(plan.message).toContain("Project Manager plan for:");
+    expect(plan.message).toContain("Workflow command: plan");
+    expect(plan.message).toContain("Status update:");
     expect(plan.message).toContain("Frontend Agent:");
     expect(plan.message).toContain("Backend Agent:");
     expect(plan.message).toContain("Reviewer:");
@@ -153,6 +157,160 @@ describe("project manager planner service", () => {
     ).toThrowError(
       new ProjectManagerPlannerValidationError(
         'roles must include the reserved "project_manager" role before planning can start.',
+      ),
+    );
+  });
+
+  it("routes implement/review/integrate workflow commands to phase-specific specialists", () => {
+    const service = createProjectManagerPlannerService();
+
+    const implementPlan = service.planGoal({
+      goal: "implement: close the approval workflow",
+      roles: [
+        {
+          roleKey: "project_manager",
+          displayName: "Project Manager",
+          responsibility: "Plans work and coordinates approvals.",
+        },
+        {
+          roleKey: "frontend_agent",
+          displayName: "Frontend Agent",
+          responsibility: "Owns UI structure and interaction details.",
+        },
+        {
+          roleKey: "backend_agent",
+          displayName: "Backend Agent",
+          responsibility: "Owns runtime behavior and persistence.",
+        },
+        {
+          roleKey: "reviewer",
+          displayName: "Reviewer",
+          responsibility: "Owns validation and release readiness checks.",
+        },
+      ],
+    });
+    expect(implementPlan.workflowCommand).toBe("implement");
+    expect(implementPlan.summary).toContain("implementation workflow");
+    expect(implementPlan.tasks.map((task) => task.ownerRole)).toEqual([
+      "frontend_agent",
+      "backend_agent",
+    ]);
+    expect(implementPlan.message).toContain("Workflow command: implement");
+    expect(implementPlan.message).toContain("Status update:");
+
+    const reviewPlan = service.planGoal({
+      goal: "review: close the approval workflow",
+      roles: [
+        {
+          roleKey: "project_manager",
+          displayName: "Project Manager",
+          responsibility: "Plans work and coordinates approvals.",
+        },
+        {
+          roleKey: "frontend_agent",
+          displayName: "Frontend Agent",
+          responsibility: "Owns UI structure and interaction details.",
+        },
+        {
+          roleKey: "backend_agent",
+          displayName: "Backend Agent",
+          responsibility: "Owns runtime behavior and persistence.",
+        },
+        {
+          roleKey: "reviewer",
+          displayName: "Reviewer",
+          responsibility: "Owns validation and release readiness checks.",
+        },
+      ],
+    });
+    expect(reviewPlan.workflowCommand).toBe("review");
+    expect(reviewPlan.summary).toContain("review workflow");
+    expect(reviewPlan.tasks.map((task) => task.ownerRole)).toEqual(["reviewer"]);
+    expect(reviewPlan.tasks[0]?.title).toContain("Review and validate");
+    expect(reviewPlan.message).toContain("Workflow command: review");
+
+    const integratePlan = service.planGoal({
+      goal: "integrate: close the approval workflow",
+      roles: [
+        {
+          roleKey: "project_manager",
+          displayName: "Project Manager",
+          responsibility: "Plans work and coordinates approvals.",
+        },
+        {
+          roleKey: "frontend_agent",
+          displayName: "Frontend Agent",
+          responsibility: "Owns UI structure and interaction details.",
+        },
+        {
+          roleKey: "backend_agent",
+          displayName: "Backend Agent",
+          responsibility: "Owns runtime behavior and persistence.",
+        },
+        {
+          roleKey: "reviewer",
+          displayName: "Reviewer",
+          responsibility: "Owns validation and release readiness checks.",
+        },
+      ],
+    });
+    expect(integratePlan.workflowCommand).toBe("integrate");
+    expect(integratePlan.summary).toContain("integration workflow");
+    expect(integratePlan.tasks.map((task) => task.ownerRole)).toEqual([
+      "backend_agent",
+    ]);
+    expect(integratePlan.tasks[0]?.title).toContain("Integrate and stabilize");
+    expect(integratePlan.message).toContain("Workflow command: integrate");
+  });
+
+  it("rejects review workflow command when no review role is available", () => {
+    const service = createProjectManagerPlannerService();
+
+    expect(() =>
+      service.planGoal({
+        goal: "review: validate the release candidate",
+        roles: [
+          {
+            roleKey: "project_manager",
+            displayName: "Project Manager",
+            responsibility: "Plans work and coordinates approvals.",
+          },
+          {
+            roleKey: "backend_agent",
+            displayName: "Backend Agent",
+            responsibility: "Owns runtime behavior and persistence.",
+          },
+        ],
+      }),
+    ).toThrowError(
+      new ProjectManagerPlannerValidationError(
+        'roles must include at least one review specialist role before running "review:" commands.',
+      ),
+    );
+  });
+
+  it("rejects recognized workflow commands without an objective payload", () => {
+    const service = createProjectManagerPlannerService();
+
+    expect(() =>
+      service.planGoal({
+        goal: "implement:",
+        roles: [
+          {
+            roleKey: "project_manager",
+            displayName: "Project Manager",
+            responsibility: "Plans work and coordinates approvals.",
+          },
+          {
+            roleKey: "backend_agent",
+            displayName: "Backend Agent",
+            responsibility: "Owns runtime behavior and persistence.",
+          },
+        ],
+      }),
+    ).toThrowError(
+      new ProjectManagerPlannerValidationError(
+        'goal command "implement" must include a non-empty objective after ":".',
       ),
     );
   });

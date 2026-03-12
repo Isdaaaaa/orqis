@@ -274,8 +274,12 @@ Safe to defer:
 
 ## Phase 4: Workflow hardening and integration
 
-- [ ] Add implementation/review/integration workflow commands in PM logic
+- [x] Add implementation/review/integration workflow commands in PM logic
   - Acceptance criteria: PM can route tasks into phase-specific workflows and post explicit status updates.
+  - Summary: Added command-aware PM planning so `implement:`, `review:`, and `integrate:` goals route tasks into phase-specific specialist workflows instead of always creating one generic plan slice.
+  - Summary (follow-up): Added explicit workflow command + status-update lines in PM plan messages and returned command/status metadata in planner responses for runtime/UI consumers.
+  - Summary (follow-up): Added core, persistence, and runtime regression coverage for command routing, command validation, and workflow status-message emission.
+  - Changed: `packages/core/src/project-manager-planner-service.ts`, `packages/core/test/project-manager-planner-service.test.ts`, `apps/web/src/persistence.ts`, `apps/web/test/timeline-persistence.test.ts`, `apps/web/test/runtime.test.ts`, `README.md`, `TODO.md`.
 
 - [ ] Add audit timeline view
   - Acceptance criteria: key actions (task create/assign, approval, run status changes) are traceable in UI.
@@ -301,6 +305,11 @@ Safe to defer:
 
 - [ ] Add browser regression coverage for workspace-shell script initialization and quick-project popover visibility (prevent parse-time JS failures and clipped rail popover interactions)
   - Acceptance criteria: browser regressions catch workspace-shell script initialization failures and quick-project popover visibility/clipping issues.
+
+#### Hardening before Phase 5
+
+Unclassified:
+- [ ] Add planner workflow-command regression coverage for `implementation:`/`integration:` aliases and unknown-prefix fallback behavior so command parsing remains stable across planner core/runtime paths
 
 ## Later: Parallel execution and repository workflows
 

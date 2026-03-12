@@ -449,7 +449,9 @@ describe("@orqis/web workspace timeline persistence", () => {
 
         expect(plan.projectId).toBe(createdProject.projectId);
         expect(plan.workspaceId).toBe(createdProject.workspaceId);
+        expect(plan.workflowCommand).toBe("plan");
         expect(plan.summary).toContain("first approval workflow");
+        expect(plan.statusUpdate).toContain("Planning workflow is complete");
         expect(plan.projectManagerRoleKey).toBe("project_manager");
         expect(plan.goalMessage).toMatchObject({
           actorType: "user",
@@ -461,6 +463,8 @@ describe("@orqis/web workspace timeline persistence", () => {
           actorId: "project_manager",
         });
         expect(plan.planMessage.content).toContain("Project Manager plan for:");
+        expect(plan.planMessage.content).toContain("Workflow command: plan");
+        expect(plan.planMessage.content).toContain("Status update:");
         expect(plan.tasks.map((task) => task.ownerRole)).toEqual([
           "frontend_agent",
           "backend_agent",
@@ -501,6 +505,8 @@ describe("@orqis/web workspace timeline persistence", () => {
         ]);
         expect(messages[0]?.content).toBe("Implement the first approval workflow");
         expect(messages[1]?.content).toContain("Project Manager plan for:");
+        expect(messages[1]?.content).toContain("Workflow command: plan");
+        expect(messages[1]?.content).toContain("Status update:");
         expect(tasks).toHaveLength(3);
         expect(tasks[1]).toMatchObject({
           ownerRole: "backend_agent",
@@ -610,6 +616,69 @@ describe("@orqis/web workspace timeline persistence", () => {
         ]);
       } finally {
         database.close();
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
+  );
+
+  it(
+    "routes workflow command goals to phase-specific PM task plans and explicit status updates",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "orqis-web-workflow-commands-"));
+      const databaseFilePath = join(tempDir, "workflow-commands.db");
+      const store = createWorkspaceTimelineStore({
+        databaseFilePath,
+      });
+
+      try {
+        const project = store.createProject({
+          name: "Workflow Commands Project",
+        });
+
+        const implementationPlan = store.createProjectManagerPlan({
+          workspaceId: project.workspaceId,
+          projectId: project.projectId,
+          goal: "implement: ship the runtime workflow panel",
+          requestedByActorId: "owner",
+        });
+        expect(implementationPlan.workflowCommand).toBe("implement");
+        expect(implementationPlan.summary).toContain("implementation workflow");
+        expect(
+          implementationPlan.tasks.map((task) => task.ownerRole).sort(),
+        ).toEqual(["backend_agent", "frontend_agent"]);
+        expect(implementationPlan.planMessage.content).toContain(
+          "Workflow command: implement",
+        );
+        expect(implementationPlan.planMessage.content).toContain("Status update:");
+
+        const reviewPlan = store.createProjectManagerPlan({
+          workspaceId: project.workspaceId,
+          projectId: project.projectId,
+          goal: "review: ship the runtime workflow panel",
+          requestedByActorId: "owner",
+        });
+        expect(reviewPlan.workflowCommand).toBe("review");
+        expect(reviewPlan.summary).toContain("review workflow");
+        expect(reviewPlan.tasks.map((task) => task.ownerRole)).toEqual(["reviewer"]);
+        expect(reviewPlan.planMessage.content).toContain("Workflow command: review");
+
+        const integrationPlan = store.createProjectManagerPlan({
+          workspaceId: project.workspaceId,
+          projectId: project.projectId,
+          goal: "integrate: ship the runtime workflow panel",
+          requestedByActorId: "owner",
+        });
+        expect(integrationPlan.workflowCommand).toBe("integrate");
+        expect(integrationPlan.summary).toContain("integration workflow");
+        expect(integrationPlan.tasks.map((task) => task.ownerRole)).toEqual([
+          "backend_agent",
+        ]);
+        expect(integrationPlan.planMessage.content).toContain(
+          "Workflow command: integrate",
+        );
+      } finally {
+        store.close();
         await rm(tempDir, { recursive: true, force: true });
       }
     },
