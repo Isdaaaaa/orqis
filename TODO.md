@@ -251,15 +251,20 @@ Safe to defer:
   - Summary (follow-up): Exposed authenticated runtime APIs for task output submission and approval decisions, then added persistence/runtime regression coverage for approve, revision request, resubmission, final approval, run-status updates, and audit-history continuity.
   - Changed: `apps/web/src/persistence.ts`, `apps/web/src/index.ts`, `apps/web/test/timeline-persistence.test.ts`, `apps/web/test/runtime.test.ts`, `README.md`, `TODO.md`.
 
-- [ ] Add first run lifecycle states (`planned`, `running`, `waiting_approval`, `done`, `failed`)
+- [x] Add first run lifecycle states (`planned`, `running`, `waiting_approval`, `done`, `failed`)
   - Acceptance criteria: run state transitions are validated and invalid transitions are rejected.
+  - Summary: Added a canonical run lifecycle contract in core plus guarded-transition validation that rejects invalid run state edges before persistence updates.
+  - Summary (follow-up): Updated workspace persistence flows so claims move runs into `running`, output submission moves runs into `waiting_approval`, and approval decisions resolve runs to `running`/`done`/`failed` based on run task outcomes.
+  - Summary (follow-up): Persisted `started_at`/`ended_at` lifecycle timestamps for run transitions and added regression coverage for running/done/failed paths.
+  - Changed: `packages/core/src/run-lifecycle.ts`, `packages/core/src/index.ts`, `packages/core/src/approval-guarded-transition-service.ts`, `packages/core/test/approval-guarded-transition-service.test.ts`, `apps/web/src/persistence.ts`, `apps/web/test/timeline-persistence.test.ts`, `TODO.md`.
 
 #### Hardening before Phase 4
 
 Unclassified:
 - [ ] Align workspace agent-thread navigation with saved role mappings so customized planner owner roles have matching visible thread labels and navigation entries
 - [ ] Expose the task output approval loop in the workspace shell so users can submit outputs and approve/reject them without calling runtime APIs directly
-- [ ] Add persistence/runtime regression coverage for the `decision: "rejected"` approval path (including task/run state effects and PM-visible timeline messaging)
+- [ ] Add runtime regression coverage for the `decision: "rejected"` approval path (including task/run state effects and PM-visible timeline messaging) now that persistence coverage exists
+- [ ] Add runtime/persistence regression coverage for multi-approval sequencing (for example one task `revision_requested` while another run-linked approval remains unresolved) so waiting_approval gating and follow-up claim behavior stay intentional and stable
 
 ## Phase 4: Workflow hardening and integration
 

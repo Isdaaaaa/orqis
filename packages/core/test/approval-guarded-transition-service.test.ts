@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   ApprovalGuardedTransitionBlockedError,
   ApprovalGuardedTransitionConflictError,
+  ApprovalGuardedTransitionValidationError,
   createApprovalGuardedTransitionService,
   type ApprovalGuardedRunRecord,
   type ApprovalGuardedTaskRecord,
@@ -310,6 +311,23 @@ describe("approval guarded transition service", () => {
         to: "running",
       }),
     ).resolves.toEqual(createRun({ status: "running" }));
+  });
+
+  it("rejects invalid run lifecycle transitions before attempting persistence updates", async () => {
+    const repository = new InMemoryApprovalGuardedTransitionRepository({
+      runs: [createRun({ status: "planned" })],
+    });
+    const service = createApprovalGuardedTransitionService(repository);
+
+    await expect(
+      service.transitionRun({
+        runId: "run_1",
+        from: "planned",
+        to: "done",
+      }),
+    ).rejects.toBeInstanceOf(ApprovalGuardedTransitionValidationError);
+
+    expect(repository.compareAndSwapRunCalls).toBe(0);
   });
 
   it("reports a deterministic conflict when the task state changes before the transition can be applied", async () => {

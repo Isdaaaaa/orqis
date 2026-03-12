@@ -1,3 +1,10 @@
+import {
+  RUN_LIFECYCLE_STATUSES,
+  canTransitionRunLifecycle,
+  getAllowedRunLifecycleTransitions,
+  type RunLifecycleStatus,
+} from "./run-lifecycle.js";
+
 type Awaitable<T> = T | Promise<T>;
 
 export const APPROVAL_GUARDED_TASK_STATES = [
@@ -11,15 +18,8 @@ export const APPROVAL_GUARDED_TASK_STATES = [
 export type ApprovalGuardedTaskState =
   (typeof APPROVAL_GUARDED_TASK_STATES)[number];
 
-export const APPROVAL_GUARDED_RUN_STATUSES = [
-  "planned",
-  "running",
-  "waiting_approval",
-  "done",
-  "failed",
-] as const;
-export type ApprovalGuardedRunStatus =
-  (typeof APPROVAL_GUARDED_RUN_STATUSES)[number];
+export const APPROVAL_GUARDED_RUN_STATUSES = RUN_LIFECYCLE_STATUSES;
+export type ApprovalGuardedRunStatus = RunLifecycleStatus;
 
 export const APPROVAL_GUARD_APPROVAL_STATUSES = [
   "pending",
@@ -225,6 +225,25 @@ function normalizeRunStatus(state: string): ApprovalGuardedRunStatus {
   return normalized as ApprovalGuardedRunStatus;
 }
 
+function assertValidRunTransition(input: {
+  readonly from: ApprovalGuardedRunStatus;
+  readonly to: ApprovalGuardedRunStatus;
+}): void {
+  if (canTransitionRunLifecycle(input.from, input.to)) {
+    return;
+  }
+
+  const allowedTargets = getAllowedRunLifecycleTransitions(input.from);
+  const allowedList =
+    allowedTargets.length > 0
+      ? allowedTargets.join(", ")
+      : "(terminal state with no outgoing transitions)";
+
+  throw new ApprovalGuardedTransitionValidationError(
+    `run transition from "${input.from}" to "${input.to}" is invalid. Allowed targets from "${input.from}": ${allowedList}.`,
+  );
+}
+
 function normalizeApprovalStatus(status: string): ApprovalGuardApprovalStatus {
   const normalized = normalizeRequiredString(status, "approval.status");
 
@@ -409,6 +428,7 @@ class DefaultApprovalGuardedTransitionService
       from: normalizeRunStatus(input.from),
       to: normalizeRunStatus(input.to),
     } satisfies RunTransitionInput;
+    assertValidRunTransition(normalizedInput);
 
     let current = await getRunOrThrow(this.repository, normalizedInput.runId);
 
