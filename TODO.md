@@ -313,6 +313,7 @@ Safe to defer:
 
 Unclassified:
 - [ ] Add planner workflow-command regression coverage for `implementation:`/`integration:` aliases and unknown-prefix fallback behavior so command parsing remains stable across planner core/runtime paths
+- [ ] Add runtime/persistence regression coverage for audit timeline `approvalId` filtering and default-limit behavior so the full `GET /api/workspaces/:workspaceId/audit-events` query contract stays stable
 
 ## Later: Parallel execution and repository workflows
 
