@@ -28,6 +28,7 @@ const WORKSPACE_MESSAGE_ACTOR_TYPES = ["user", "agent", "system"] as const;
 const SESSION_COOKIE_NAME = "orqis_session";
 const SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 const AUTH_REQUIRED_ERROR_MESSAGE = "Authentication required.";
+const NO_STORE_CACHE_CONTROL_VALUE = "no-store";
 
 export interface StartOrqisWebRuntimeOptions {
   readonly host: string;
@@ -1877,24 +1878,142 @@ function resolveRequestCookie(
   return undefined;
 }
 
-function createSessionCookieHeader(sessionId: string): string {
-  return [
+function resolveUrlHeaderProtocol(
+  headerValue: string | readonly string[] | undefined,
+): string | undefined {
+  const candidateValue = Array.isArray(headerValue) ? headerValue[0] : headerValue;
+
+  if (candidateValue === undefined) {
+    return undefined;
+  }
+
+  try {
+    return new URL(candidateValue).protocol.toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveForwardedProto(request: IncomingMessage): string | undefined {
+  const forwardedHeader = request.headers.forwarded;
+  const forwardedValues = Array.isArray(forwardedHeader)
+    ? forwardedHeader
+    : [forwardedHeader];
+
+  for (const forwardedValue of forwardedValues) {
+    if (typeof forwardedValue !== "string") {
+      continue;
+    }
+
+    for (const entry of forwardedValue.split(",")) {
+      for (const directive of entry.split(";")) {
+        const separatorIndex = directive.indexOf("=");
+
+        if (separatorIndex < 0) {
+          continue;
+        }
+
+        const name = directive.slice(0, separatorIndex).trim().toLowerCase();
+
+        if (name !== "proto") {
+          continue;
+        }
+
+        const rawValue = directive
+          .slice(separatorIndex + 1)
+          .trim()
+          .replace(/^"|"$/g, "")
+          .toLowerCase();
+
+        if (rawValue.length > 0) {
+          return rawValue;
+        }
+      }
+    }
+  }
+
+  const xForwardedProtoHeader = request.headers["x-forwarded-proto"];
+  const xForwardedProtoValues = Array.isArray(xForwardedProtoHeader)
+    ? xForwardedProtoHeader
+    : [xForwardedProtoHeader];
+
+  for (const value of xForwardedProtoValues) {
+    if (typeof value !== "string") {
+      continue;
+    }
+
+    for (const candidate of value.split(",")) {
+      const normalizedCandidate = candidate.trim().toLowerCase();
+
+      if (normalizedCandidate.length > 0) {
+        return normalizedCandidate;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function requestUsesHttps(request: IncomingMessage): boolean {
+  const originProtocol = resolveUrlHeaderProtocol(request.headers.origin);
+
+  if (originProtocol !== undefined) {
+    return originProtocol === "https:";
+  }
+
+  const refererProtocol = resolveUrlHeaderProtocol(request.headers.referer);
+
+  if (refererProtocol !== undefined) {
+    return refererProtocol === "https:";
+  }
+
+  const forwardedProto = resolveForwardedProto(request);
+
+  if (forwardedProto !== undefined) {
+    return forwardedProto === "https";
+  }
+
+  const socket = request.socket as IncomingMessage["socket"] & {
+    readonly encrypted?: boolean;
+  };
+
+  return socket.encrypted === true;
+}
+
+function createSessionCookieHeader(sessionId: string, secure: boolean): string {
+  const cookieParts = [
     `${SESSION_COOKIE_NAME}=${encodeURIComponent(sessionId)}`,
     "Path=/",
     `Max-Age=${SESSION_COOKIE_MAX_AGE_SECONDS}`,
     "HttpOnly",
     "SameSite=Lax",
-  ].join("; ");
+  ];
+
+  if (secure) {
+    cookieParts.push("Secure");
+  }
+
+  return cookieParts.join("; ");
 }
 
-function createSessionCookieClearHeader(): string {
-  return [
+function createSessionCookieClearHeader(secure: boolean): string {
+  const cookieParts = [
     `${SESSION_COOKIE_NAME}=`,
     "Path=/",
     "Max-Age=0",
     "HttpOnly",
     "SameSite=Lax",
-  ].join("; ");
+  ];
+
+  if (secure) {
+    cookieParts.push("Secure");
+  }
+
+  return cookieParts.join("; ");
+}
+
+function isAuthSensitivePathname(pathname: string): boolean {
+  return pathname === "/" || pathname === LOGIN_PATH || pathname.startsWith("/api/");
 }
 
 function resolveRuntimeSession(
@@ -2024,6 +2143,7 @@ async function handleSessionRoute(
 ): Promise<void> {
   const sessionId = resolveRequestCookie(request, SESSION_COOKIE_NAME);
   const session = resolveRuntimeSession(request, context);
+  const useSecureCookie = requestUsesHttps(request);
 
   if (request.method === "GET") {
     writeJson(response, 200, {
@@ -2086,7 +2206,10 @@ async function handleSessionRoute(
         },
       },
       {
-        "set-cookie": createSessionCookieHeader(createdSession.id),
+        "set-cookie": createSessionCookieHeader(
+          createdSession.id,
+          useSecureCookie,
+        ),
       },
     );
     return;
@@ -2104,7 +2227,7 @@ async function handleSessionRoute(
         authenticated: false,
       },
       {
-        "set-cookie": createSessionCookieClearHeader(),
+        "set-cookie": createSessionCookieClearHeader(useSecureCookie),
       },
     );
     return;
@@ -2317,6 +2440,10 @@ async function handleRequest(
 ): Promise<void> {
   const pathname = resolvePathname(request);
   const session = resolveRuntimeSession(request, context);
+
+  if (isAuthSensitivePathname(pathname)) {
+    response.setHeader("cache-control", NO_STORE_CACHE_CONTROL_VALUE);
+  }
 
   if (request.method === "GET" && pathname === "/health") {
     writeJson(response, 200, createHealthPayload(context.startedAt));

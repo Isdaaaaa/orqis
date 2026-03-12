@@ -183,7 +183,9 @@ Must finish before Phase 3:
 - [x] Add web-runtime auth regression coverage for session lifecycle edges (`DELETE /api/session` cookie clearing, authenticated `GET /login` redirect, and unauthorized `GET/POST /api/workspaces/:workspaceId/messages`)
   - Summary: Added focused web-runtime auth regression coverage for authenticated `/login` redirects, `DELETE /api/session` cookie clearing plus session invalidation, and unauthorized `GET`/`POST` workspace-message API requests.
   - Changed: `apps/web/test/runtime.test.ts`, `TODO.md`.
-- [ ] Harden local session cookie/auth response headers for tunnel exposure (`Secure` cookie behavior when request origin is HTTPS and `Cache-Control: no-store` on auth-sensitive HTML/API responses)
+- [x] Harden local session cookie/auth response headers for tunnel exposure (`Secure` cookie behavior when request origin is HTTPS and `Cache-Control: no-store` on auth-sensitive HTML/API responses)
+  - Summary: Added HTTPS-aware session cookie issuance/clearing so tunnel-forwarded auth requests append `Secure`, and marked login, workspace-shell, redirect, and API responses as `Cache-Control: no-store` to avoid caching auth-sensitive content.
+  - Changed: `apps/web/src/index.ts`, `apps/web/test/runtime.test.ts`, `TODO.md`.
 
 Safe to defer:
 - [ ] Add migration regression coverage proving `parent_task_id` and `parent_message_id` are nulled on parent delete after composite lineage constraints
