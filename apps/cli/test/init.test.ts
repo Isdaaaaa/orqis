@@ -115,36 +115,6 @@ function resolveFixturePath(fileName: string): string {
   return fileURLToPath(new URL(`./fixtures/${fileName}`, import.meta.url));
 }
 
-async function loadRealWebRuntimeStarter(): Promise<
-  (options: {
-    host: string;
-    port: number;
-    persistence?: {
-      configDir?: string;
-    };
-  }) => Promise<{
-    baseUrl: string;
-    healthUrl: string;
-    stop(): Promise<void>;
-  }>
-> {
-  const moduleUrl = new URL("../../web/src/index.ts", import.meta.url);
-  const runtimeModule = (await import(moduleUrl.href)) as {
-    startOrqisWebRuntime: (options: {
-      host: string;
-      port: number;
-      persistence?: {
-        configDir?: string;
-      };
-    }) => Promise<{
-      baseUrl: string;
-      healthUrl: string;
-      stop(): Promise<void>;
-    }>;
-  };
-  return runtimeModule.startOrqisWebRuntime;
-}
-
 afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
@@ -1079,14 +1049,7 @@ describe("orqis init runtime bootstrap", () => {
     const exitCode = await runCli(
       ["node", "orqis", "init", "--config-dir", configDir],
       {
-        startWebRuntime: async (runtimeConfig) => {
-          const startWebRuntime = await loadRealWebRuntimeStarter();
-          return startWebRuntime({
-            host: runtimeConfig.host,
-            port: 0,
-            persistence: runtimeConfig.persistence,
-          });
-        },
+        startWebRuntime: async () => createTestRuntime(),
         waitForShutdown: async (runtime) => {
           await runtime.stop();
         },
