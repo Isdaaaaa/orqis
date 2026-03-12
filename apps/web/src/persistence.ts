@@ -7,8 +7,18 @@ import { fileURLToPath } from "node:url";
 import BetterSqlite3 from "better-sqlite3";
 import {
   createProjectManagerPlannerService,
+  createTaskClaimService,
   PROJECT_MANAGER_PLANNER_ROLE_KEY,
   ProjectManagerPlannerValidationError,
+  TASK_CLAIM_OWNER_TYPES,
+  type TaskClaimConflictCode,
+  type TaskClaimOwnerType,
+  type TaskClaimRecord,
+  type TaskClaimRepository,
+  type TaskClaimServiceTaskState,
+  TaskClaimConflictError,
+  TaskClaimNotFoundError,
+  TaskClaimValidationError,
 } from "@orqis/core";
 
 type SqliteDatabaseSync = InstanceType<typeof BetterSqlite3>;
@@ -137,18 +147,47 @@ export interface CreateProjectManagerPlanInput {
   readonly requestedByActorId: string;
 }
 
-export interface ProjectManagerPlannedTaskRecord {
+export interface WorkspaceTaskAssignmentRecord {
   readonly id: string;
   readonly projectId: string;
   readonly workspaceId: string;
-  readonly runId: string;
-  readonly ownerRole: string;
-  readonly ownerDisplayName: string;
-  readonly title: string;
-  readonly description: string;
-  readonly state: "todo";
+  readonly taskId: string;
+  readonly runId: string | null;
+  readonly roleKey: string;
+  readonly roleDisplayName: string;
+  readonly modelKey: string | null;
+  readonly roleResponsibility: string;
+  readonly assignedByActorType: WorkspaceMessageActorType;
+  readonly assignedByActorId: string | null;
+  readonly assignedAt: string;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+export interface WorkspaceTaskRecord {
+  readonly id: string;
+  readonly projectId: string;
+  readonly workspaceId: string;
+  readonly runId: string | null;
+  readonly ownerRole: string | null;
+  readonly ownerDisplayName: string | null;
+  readonly title: string;
+  readonly description: string | null;
+  readonly state: TaskClaimServiceTaskState;
+  readonly lockOwnerType: TaskClaimOwnerType | null;
+  readonly lockOwnerId: string | null;
+  readonly lockAcquiredAt: string | null;
+  readonly checkoutRunId: string | null;
+  readonly executionRunId: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly completedAt: string | null;
+  readonly assignment: WorkspaceTaskAssignmentRecord | null;
+}
+
+export interface ProjectManagerPlannedTaskRecord extends WorkspaceTaskRecord {
+  readonly ownerDisplayName: string;
+  readonly assignment: WorkspaceTaskAssignmentRecord;
 }
 
 export interface ProjectManagerPlanRecord {
@@ -176,6 +215,9 @@ export interface WorkspaceTimelineStore {
   listProjects(): ProjectWorkspaceSummary[];
   createProject(input: CreateProjectInput): ProjectWorkspaceSummary;
   createProjectManagerPlan(input: CreateProjectManagerPlanInput): ProjectManagerPlanRecord;
+  listWorkspaceTasks(workspaceId: string): WorkspaceTaskRecord[];
+  claimTaskExecution(input: ClaimTaskExecutionInput): Promise<WorkspaceTaskRecord>;
+  releaseTaskExecution(input: ReleaseTaskExecutionInput): Promise<WorkspaceTaskRecord>;
   listWorkspaceMessages(workspaceId: string): WorkspaceTimelineMessage[];
   getAgentConfiguration(): AgentConfiguration;
   saveAgentConfiguration(input: SaveAgentConfigurationInput): AgentConfiguration;
@@ -218,8 +260,65 @@ class WorkspaceTimelineError extends Error {
 
 export class WorkspaceTimelineValidationError extends WorkspaceTimelineError {}
 export class WorkspaceTimelineConflictError extends WorkspaceTimelineError {}
+export class WorkspaceTimelineNotFoundError extends WorkspaceTimelineError {}
 export class WorkspaceTimelineDependencyError extends WorkspaceTimelineError {
   readonly code = SQLITE_NATIVE_BINDING_UNAVAILABLE_ERROR_CODE;
+}
+
+export class WorkspaceTaskClaimConflictError extends WorkspaceTimelineConflictError {
+  readonly code: TaskClaimConflictCode;
+  readonly taskId: string;
+  readonly currentExecutionRunId: string | null;
+  readonly currentCheckoutRunId: string | null;
+  readonly currentOwnerType: TaskClaimOwnerType | null;
+  readonly currentOwnerId: string | null;
+
+  constructor(error: TaskClaimConflictError) {
+    super(error.message);
+    this.name = new.target.name;
+    this.code = error.code;
+    this.taskId = error.taskId;
+    this.currentExecutionRunId = error.currentExecutionRunId;
+    this.currentCheckoutRunId = error.currentCheckoutRunId;
+    this.currentOwnerType = error.currentOwnerType;
+    this.currentOwnerId = error.currentOwnerId;
+  }
+}
+
+export class WorkspaceTaskAssignmentConflictError extends WorkspaceTimelineConflictError {
+  readonly code = "task_assigned_to_another_role";
+  readonly taskId: string;
+  readonly assignedRoleKey: string | null;
+  readonly attemptedRoleKey: string;
+
+  constructor(taskId: string, assignedRoleKey: string | null, attemptedRoleKey: string) {
+    super(
+      assignedRoleKey === null
+        ? `Task "${taskId}" does not have a specialist role assignment to claim.`
+        : `Task "${taskId}" is assigned to role "${assignedRoleKey}", so agent "${attemptedRoleKey}" cannot claim it.`,
+    );
+    this.name = new.target.name;
+    this.taskId = taskId;
+    this.assignedRoleKey = assignedRoleKey;
+    this.attemptedRoleKey = attemptedRoleKey;
+  }
+}
+
+export interface ClaimTaskExecutionInput {
+  readonly workspaceId: string;
+  readonly taskId: string;
+  readonly runId: string;
+  readonly ownerType: TaskClaimOwnerType;
+  readonly ownerId: string;
+  readonly claimedAt?: string;
+}
+
+export interface ReleaseTaskExecutionInput {
+  readonly workspaceId: string;
+  readonly taskId: string;
+  readonly runId: string;
+  readonly ownerType: TaskClaimOwnerType;
+  readonly ownerId: string;
 }
 
 interface WorkspaceProjectRow {
@@ -278,9 +377,44 @@ interface AgentConfigurationCountRow {
   readonly agentRoleCount: number;
 }
 
+interface WorkspaceTaskRow {
+  readonly id: string;
+  readonly projectId: string;
+  readonly workspaceId: string;
+  readonly runId: string | null;
+  readonly ownerRole: string | null;
+  readonly ownerDisplayName: string | null;
+  readonly title: string;
+  readonly description: string | null;
+  readonly state: TaskClaimServiceTaskState;
+  readonly lockOwnerType: TaskClaimOwnerType | null;
+  readonly lockOwnerId: string | null;
+  readonly lockAcquiredAt: string | null;
+  readonly checkoutRunId: string | null;
+  readonly executionRunId: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly completedAt: string | null;
+  readonly assignmentId: string | null;
+  readonly assignmentRunId: string | null;
+  readonly assignmentRoleKey: string | null;
+  readonly assignmentRoleDisplayName: string | null;
+  readonly assignmentModelKey: string | null;
+  readonly assignmentRoleResponsibility: string | null;
+  readonly assignedByActorType: WorkspaceMessageActorType | null;
+  readonly assignedByActorId: string | null;
+  readonly assignedAt: string | null;
+  readonly assignmentCreatedAt: string | null;
+  readonly assignmentUpdatedAt: string | null;
+}
+
 interface SchemaMigrationRow {
   readonly fileName: string;
 }
+
+type TaskClaimSnapshot = Parameters<
+  TaskClaimRepository["compareAndSwapTaskClaim"]
+>[1];
 
 function normalizeOptionalString(value: unknown): string | undefined {
   if (typeof value !== "string") {
@@ -434,6 +568,60 @@ function isWorkspaceMessageActorType(
   return (
     WORKSPACE_MESSAGE_ACTOR_TYPES as readonly string[]
   ).includes(value);
+}
+
+function isTaskClaimOwnerType(value: string): value is TaskClaimOwnerType {
+  return (TASK_CLAIM_OWNER_TYPES as readonly string[]).includes(value);
+}
+
+function mapWorkspaceTaskRow(row: WorkspaceTaskRow): WorkspaceTaskRecord {
+  const assignment =
+    row.assignmentId === null ||
+    row.assignmentRoleKey === null ||
+    row.assignmentRoleDisplayName === null ||
+    row.assignmentRoleResponsibility === null ||
+    row.assignedByActorType === null ||
+    row.assignedAt === null ||
+    row.assignmentCreatedAt === null ||
+    row.assignmentUpdatedAt === null
+      ? null
+      : {
+          id: row.assignmentId,
+          projectId: row.projectId,
+          workspaceId: row.workspaceId,
+          taskId: row.id,
+          runId: row.assignmentRunId,
+          roleKey: row.assignmentRoleKey,
+          roleDisplayName: row.assignmentRoleDisplayName,
+          modelKey: row.assignmentModelKey,
+          roleResponsibility: row.assignmentRoleResponsibility,
+          assignedByActorType: row.assignedByActorType,
+          assignedByActorId: row.assignedByActorId,
+          assignedAt: row.assignedAt,
+          createdAt: row.assignmentCreatedAt,
+          updatedAt: row.assignmentUpdatedAt,
+        };
+
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    workspaceId: row.workspaceId,
+    runId: row.runId,
+    ownerRole: row.ownerRole,
+    ownerDisplayName: row.ownerDisplayName ?? assignment?.roleDisplayName ?? row.ownerRole,
+    title: row.title,
+    description: row.description,
+    state: row.state,
+    lockOwnerType: row.lockOwnerType,
+    lockOwnerId: row.lockOwnerId,
+    lockAcquiredAt: row.lockAcquiredAt,
+    checkoutRunId: row.checkoutRunId,
+    executionRunId: row.executionRunId,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    completedAt: row.completedAt,
+    assignment,
+  };
 }
 
 function mapSqliteError(error: unknown): WorkspaceTimelineError {
@@ -1011,6 +1199,117 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
     }
   }
 
+  listWorkspaceTasks(workspaceId: string): WorkspaceTaskRecord[] {
+    const normalizedWorkspaceId = normalizeRequiredString(
+      workspaceId,
+      "workspaceId",
+    );
+
+    return this.queryWorkspaceTasks(normalizedWorkspaceId);
+  }
+
+  async claimTaskExecution(
+    input: ClaimTaskExecutionInput,
+  ): Promise<WorkspaceTaskRecord> {
+    const workspaceId = normalizeRequiredString(input.workspaceId, "workspaceId");
+    const taskId = normalizeRequiredString(input.taskId, "taskId");
+    const runId = normalizeRequiredString(input.runId, "runId");
+    const ownerType = normalizeRequiredString(input.ownerType, "ownerType");
+    const ownerId = normalizeRequiredString(input.ownerId, "ownerId");
+    const claimedAt =
+      input.claimedAt === undefined
+        ? undefined
+        : normalizeRequiredString(input.claimedAt, "claimedAt");
+
+    if (!isTaskClaimOwnerType(ownerType)) {
+      throw new WorkspaceTimelineValidationError(
+        `ownerType must be one of: ${TASK_CLAIM_OWNER_TYPES.join(", ")}.`,
+      );
+    }
+
+    const task = this.requireWorkspaceTask(taskId, workspaceId);
+    this.assertAgentClaimMatchesAssignment(task, ownerType, ownerId);
+
+    try {
+      await this.createTaskClaimServiceForAuditContext({
+        actorType:
+          ownerType === "user" ? "user" : ownerType === "agent" ? "agent" : "system",
+        actorId: ownerType === "run" ? runId : ownerId,
+        correlationRunId: runId,
+      }).claimTaskExecution({
+        taskId,
+        runId,
+        ownerType,
+        ownerId,
+        claimedAt,
+      });
+
+      return this.requireWorkspaceTask(taskId, workspaceId);
+    } catch (error) {
+      if (error instanceof TaskClaimValidationError) {
+        throw new WorkspaceTimelineValidationError(error.message);
+      }
+
+      if (error instanceof TaskClaimNotFoundError) {
+        throw new WorkspaceTimelineNotFoundError(error.message);
+      }
+
+      if (error instanceof TaskClaimConflictError) {
+        throw new WorkspaceTaskClaimConflictError(error);
+      }
+
+      throw mapSqliteError(error);
+    }
+  }
+
+  async releaseTaskExecution(
+    input: ReleaseTaskExecutionInput,
+  ): Promise<WorkspaceTaskRecord> {
+    const workspaceId = normalizeRequiredString(input.workspaceId, "workspaceId");
+    const taskId = normalizeRequiredString(input.taskId, "taskId");
+    const runId = normalizeRequiredString(input.runId, "runId");
+    const ownerType = normalizeRequiredString(input.ownerType, "ownerType");
+    const ownerId = normalizeRequiredString(input.ownerId, "ownerId");
+
+    if (!isTaskClaimOwnerType(ownerType)) {
+      throw new WorkspaceTimelineValidationError(
+        `ownerType must be one of: ${TASK_CLAIM_OWNER_TYPES.join(", ")}.`,
+      );
+    }
+
+    this.requireWorkspaceTask(taskId, workspaceId);
+
+    try {
+      await this.createTaskClaimServiceForAuditContext({
+        actorType:
+          ownerType === "user" ? "user" : ownerType === "agent" ? "agent" : "system",
+        actorId: ownerType === "run" ? runId : ownerId,
+        correlationRunId: runId,
+      }).releaseTaskExecution({
+        taskId,
+        runId,
+        ownerType,
+        ownerId,
+      });
+
+      return this.requireWorkspaceTask(taskId, workspaceId);
+    } catch (error) {
+      if (error instanceof TaskClaimValidationError) {
+        throw new WorkspaceTimelineValidationError(error.message);
+      }
+
+      if (error instanceof TaskClaimNotFoundError) {
+        throw new WorkspaceTimelineNotFoundError(error.message);
+      }
+
+      if (error instanceof TaskClaimConflictError) {
+        throw new WorkspaceTaskClaimConflictError(error);
+      }
+
+      throw mapSqliteError(error);
+    }
+  }
+
   listWorkspaceMessages(workspaceId: string): WorkspaceTimelineMessage[] {
     const normalizedWorkspaceId = normalizeRequiredString(
       workspaceId,
@@ -1123,13 +1422,14 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
       "requestedByActorId",
     );
 
+    const agentConfiguration = this.getAgentConfiguration();
     const planner = createProjectManagerPlannerService();
     let plan;
 
     try {
       plan = planner.planGoal({
         goal,
-        roles: this.getAgentConfiguration().agentRoles,
+        roles: agentConfiguration.agentRoles,
       });
     } catch (error) {
       if (error instanceof ProjectManagerPlannerValidationError) {
@@ -1144,6 +1444,9 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
     const goalMessageId = randomUUID();
     const planMessageId = randomUUID();
     const plannedTasks = [] as ProjectManagerPlannedTaskRecord[];
+    const agentRolesByKey = new Map(
+      agentConfiguration.agentRoles.map((agentRole) => [agentRole.roleKey, agentRole]),
+    );
     let transactionStarted = false;
 
     try {
@@ -1180,6 +1483,14 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
 
           for (const task of plan.tasks) {
             const taskId = randomUUID();
+            const assignmentId = randomUUID();
+            const assignedRole = agentRolesByKey.get(task.ownerRole);
+
+            if (assignedRole === undefined) {
+              throw new WorkspaceTimelineConflictError(
+                `task owner role "${task.ownerRole}" does not match a saved specialist role mapping.`,
+              );
+            }
 
             this.database
               .prepare(
@@ -1203,6 +1514,32 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
                 createdAt,
               );
 
+            this.database
+              .prepare(
+                [
+                  "INSERT INTO task_assignments",
+                  "  (id, project_id, workspace_id, task_id, run_id, role_key, role_display_name, model_key, role_responsibility, assigned_by_actor_type, assigned_by_actor_id, assigned_at, created_at, updated_at)",
+                  "VALUES",
+                  "  (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ].join("\n"),
+              )
+              .run(
+                assignmentId,
+                projectId,
+                workspaceId,
+                taskId,
+                runId,
+                assignedRole.roleKey,
+                assignedRole.displayName,
+                assignedRole.modelKey,
+                assignedRole.responsibility,
+                "agent",
+                plan.projectManagerRoleKey,
+                createdAt,
+                createdAt,
+                createdAt,
+              );
+
             plannedTasks.push({
               id: taskId,
               projectId,
@@ -1213,8 +1550,30 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
               title: task.title,
               description: task.description,
               state: task.state,
+              lockOwnerType: null,
+              lockOwnerId: null,
+              lockAcquiredAt: null,
+              checkoutRunId: null,
+              executionRunId: null,
               createdAt,
               updatedAt: createdAt,
+              completedAt: null,
+              assignment: {
+                id: assignmentId,
+                projectId,
+                workspaceId,
+                taskId,
+                runId,
+                roleKey: assignedRole.roleKey,
+                roleDisplayName: assignedRole.displayName,
+                modelKey: assignedRole.modelKey,
+                roleResponsibility: assignedRole.responsibility,
+                assignedByActorType: "agent",
+                assignedByActorId: plan.projectManagerRoleKey,
+                assignedAt: createdAt,
+                createdAt,
+                updatedAt: createdAt,
+              },
             });
           }
         },
@@ -1299,6 +1658,178 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
 
       throw mapSqliteError(error);
     }
+  }
+
+  private queryWorkspaceTasks(
+    workspaceId: string,
+    taskId?: string,
+  ): WorkspaceTaskRecord[] {
+    const rows = this.database
+      .prepare(
+        [
+          "SELECT",
+          "  tasks.id,",
+          "  tasks.project_id AS projectId,",
+          "  tasks.workspace_id AS workspaceId,",
+          "  tasks.run_id AS runId,",
+          "  tasks.owner_role AS ownerRole,",
+          "  task_assignments.role_display_name AS ownerDisplayName,",
+          "  tasks.title,",
+          "  tasks.description,",
+          "  tasks.state,",
+          "  tasks.lock_owner_type AS lockOwnerType,",
+          "  tasks.lock_owner_id AS lockOwnerId,",
+          "  tasks.lock_acquired_at AS lockAcquiredAt,",
+          "  tasks.checkout_run_id AS checkoutRunId,",
+          "  tasks.execution_run_id AS executionRunId,",
+          "  tasks.created_at AS createdAt,",
+          "  tasks.updated_at AS updatedAt,",
+          "  tasks.completed_at AS completedAt,",
+          "  task_assignments.id AS assignmentId,",
+          "  task_assignments.run_id AS assignmentRunId,",
+          "  task_assignments.role_key AS assignmentRoleKey,",
+          "  task_assignments.role_display_name AS assignmentRoleDisplayName,",
+          "  task_assignments.model_key AS assignmentModelKey,",
+          "  task_assignments.role_responsibility AS assignmentRoleResponsibility,",
+          "  task_assignments.assigned_by_actor_type AS assignedByActorType,",
+          "  task_assignments.assigned_by_actor_id AS assignedByActorId,",
+          "  task_assignments.assigned_at AS assignedAt,",
+          "  task_assignments.created_at AS assignmentCreatedAt,",
+          "  task_assignments.updated_at AS assignmentUpdatedAt",
+          "FROM tasks",
+          "LEFT JOIN task_assignments ON task_assignments.task_id = tasks.id",
+          "WHERE tasks.workspace_id = ?",
+          taskId === undefined ? "" : "  AND tasks.id = ?",
+          "ORDER BY tasks.created_at ASC, tasks.rowid ASC",
+        ]
+          .filter((line) => line.length > 0)
+          .join("\n"),
+      )
+      .all(
+        ...(taskId === undefined ? [workspaceId] : [workspaceId, taskId]),
+      ) as WorkspaceTaskRow[];
+
+    return rows.map(mapWorkspaceTaskRow);
+  }
+
+  private requireWorkspaceTask(
+    taskId: string,
+    workspaceId: string,
+  ): WorkspaceTaskRecord {
+    const [task] = this.queryWorkspaceTasks(workspaceId, taskId);
+
+    if (task !== undefined) {
+      return task;
+    }
+
+    const existingTask = this.getTaskClaimRecord(taskId);
+
+    if (existingTask === undefined) {
+      throw new WorkspaceTimelineNotFoundError(`Task "${taskId}" was not found.`);
+    }
+
+    throw new WorkspaceTimelineConflictError(
+      `Task "${taskId}" does not belong to workspace ${workspaceId}.`,
+    );
+  }
+
+  private assertAgentClaimMatchesAssignment(
+    task: WorkspaceTaskRecord,
+    ownerType: TaskClaimOwnerType,
+    ownerId: string,
+  ): void {
+    if (ownerType !== "agent") {
+      return;
+    }
+
+    const assignedRoleKey = task.assignment?.roleKey ?? task.ownerRole;
+
+    if (assignedRoleKey !== ownerId) {
+      throw new WorkspaceTaskAssignmentConflictError(
+        task.id,
+        assignedRoleKey,
+        ownerId,
+      );
+    }
+  }
+
+  private createTaskClaimServiceForAuditContext(
+    auditContext: WorkspaceAuditSqlContext,
+  ) {
+    return createTaskClaimService({
+      getTask: (taskId) => this.getTaskClaimRecord(taskId),
+      compareAndSwapTaskClaim: (taskId, expected, next) =>
+        this.databaseHandle.auditContext.runWithContext(auditContext, () =>
+          this.compareAndSwapTaskClaim(taskId, expected, next),
+        ),
+    });
+  }
+
+  private getTaskClaimRecord(taskId: string): TaskClaimRecord | undefined {
+    return this.database
+      .prepare(
+        [
+          "SELECT",
+          "  id,",
+          "  state,",
+          "  lock_owner_type AS lockOwnerType,",
+          "  lock_owner_id AS lockOwnerId,",
+          "  lock_acquired_at AS lockAcquiredAt,",
+          "  checkout_run_id AS checkoutRunId,",
+          "  execution_run_id AS executionRunId",
+          "FROM tasks",
+          "WHERE id = ?",
+          "LIMIT 1",
+        ].join("\n"),
+      )
+      .get(taskId) as TaskClaimRecord | undefined;
+  }
+
+  private compareAndSwapTaskClaim(
+    taskId: string,
+    expected: TaskClaimSnapshot,
+    next: TaskClaimSnapshot,
+  ): boolean {
+    const updatedAt = new Date().toISOString();
+    const result = this.database
+      .prepare(
+        [
+          "UPDATE tasks",
+          "SET",
+          "  state = ?,",
+          "  lock_owner_type = ?,",
+          "  lock_owner_id = ?,",
+          "  lock_acquired_at = ?,",
+          "  checkout_run_id = ?,",
+          "  execution_run_id = ?,",
+          "  updated_at = ?",
+          "WHERE id = ?",
+          "  AND state IS ?",
+          "  AND lock_owner_type IS ?",
+          "  AND lock_owner_id IS ?",
+          "  AND lock_acquired_at IS ?",
+          "  AND checkout_run_id IS ?",
+          "  AND execution_run_id IS ?",
+        ].join("\n"),
+      )
+      .run(
+        next.state,
+        next.lockOwnerType,
+        next.lockOwnerId,
+        next.lockAcquiredAt,
+        next.checkoutRunId,
+        next.executionRunId,
+        updatedAt,
+        taskId,
+        expected.state,
+        expected.lockOwnerType,
+        expected.lockOwnerId,
+        expected.lockAcquiredAt,
+        expected.checkoutRunId,
+        expected.executionRunId,
+      );
+
+    return result.changes > 0;
   }
 
   close(): void {

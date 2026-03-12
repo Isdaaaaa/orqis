@@ -278,6 +278,56 @@ export const tasks = sqliteTable(
   ],
 );
 
+export const taskAssignments = sqliteTable(
+  "task_assignments",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    // Migration SQL triggers enforce that linked task/run refs stay within this row's project/workspace pair.
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    runId: text("run_id").references(() => runs.id, { onDelete: "set null" }),
+    roleKey: text("role_key").notNull(),
+    roleDisplayName: text("role_display_name").notNull(),
+    modelKey: text("model_key"),
+    roleResponsibility: text("role_responsibility").notNull(),
+    assignedByActorType: text("assigned_by_actor_type").notNull(),
+    assignedByActorId: text("assigned_by_actor_id"),
+    assignedAt: text("assigned_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    check(
+      "task_assignments_assigned_by_actor_type_check",
+      sql`${table.assignedByActorType} in ('user', 'agent', 'system')`,
+    ),
+    foreignKey({
+      columns: [table.projectId, table.workspaceId],
+      foreignColumns: [workspaces.projectId, workspaces.id],
+      name: "task_assignments_project_id_workspace_id_workspaces_project_id_id_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.projectId, table.workspaceId, table.taskId],
+      foreignColumns: [tasks.projectId, tasks.workspaceId, tasks.id],
+      name: "task_assignments_project_id_workspace_id_task_id_tasks_project_id_workspace_id_id_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("task_assignments_task_id_unique").on(table.taskId),
+    index("task_assignments_workspace_role_assigned_at_idx").on(
+      table.workspaceId,
+      table.roleKey,
+      table.assignedAt,
+    ),
+    index("task_assignments_run_assigned_at_idx").on(table.runId, table.assignedAt),
+  ],
+);
+
 export const approvals = sqliteTable(
   "approvals",
   {
@@ -379,6 +429,7 @@ export type Project = typeof projects.$inferSelect;
 export type Workspace = typeof workspaces.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
+export type TaskAssignment = typeof taskAssignments.$inferSelect;
 export type Approval = typeof approvals.$inferSelect;
 export type Run = typeof runs.$inferSelect;
 export type AuditEvent = typeof auditEvents.$inferSelect;

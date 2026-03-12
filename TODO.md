@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Continue Phase 3 with task assignment records and specialist role mapping now that Project Manager planning runs, task lists, and visible plan messages persist in workspace state.
+Continue Phase 3 with the user approval/reject loop now that Project Manager planning, task assignment records, specialist role mapping, and lock-safe task checkout persist in workspace state.
 
 ## Completed
 
@@ -230,9 +230,12 @@ Safe to defer:
   - Summary (follow-up): Added core, persistence, and runtime regression coverage for planner validation, restart-safe plan persistence, and the authenticated planner API flow.
   - Changed: `packages/core/src/project-manager-planner-service.ts`, `packages/core/src/index.ts`, `packages/core/test/project-manager-planner-service.test.ts`, `apps/web/src/persistence.ts`, `apps/web/src/index.ts`, `apps/web/test/timeline-persistence.test.ts`, `apps/web/test/runtime.test.ts`, `apps/web/package.json`, `pnpm-lock.yaml`, `README.md`, `TODO.md`.
 
-- [ ] Implement task assignment records and specialist role mapping
+- [x] Implement task assignment records and specialist role mapping
   - Acceptance criteria: each task has owner role, state, run linkage, and timestamps.
   - Acceptance criteria: assignment + checkout flow is lock-safe and rejects competing ownership attempts deterministically.
+  - Summary: Added first-class `task_assignments` persistence with role snapshots, backfilled legacy planner tasks, and exposed workspace task reads plus authenticated checkout/release APIs.
+  - Summary (follow-up): Wired task checkout/release through the shared core claim service so assigned-role mismatches and competing run claims fail with deterministic conflict codes.
+  - Changed: `packages/db/migrations/0003_task_assignments.sql`, `packages/db/src/migrations.ts`, `packages/db/src/schema.ts`, `packages/db/test/migrations.test.ts`, `apps/web/src/persistence.ts`, `apps/web/src/index.ts`, `apps/web/test/timeline-persistence.test.ts`, `apps/web/test/runtime.test.ts`, `TODO.md`, `README.md`.
 
 - [ ] Implement user approval/reject loop for task outputs
   - Acceptance criteria: user action updates approval status, audit event is written, and PM receives the decision.

@@ -684,6 +684,232 @@ describe("@orqis/web runtime", () => {
   );
 
   it(
+    "serves role-mapped task records and deterministic checkout conflicts through authenticated task APIs",
+    async () => {
+      const { databaseFilePath, cleanup } = await createRuntimeDatabaseFilePath();
+      const runtime = await startOrqisWebRuntime({
+        host: "127.0.0.1",
+        port: 0,
+        persistence: {
+          databaseFilePath,
+        },
+      });
+
+      try {
+        const sessionCookie = await createSessionCookie(runtime.baseUrl, "owner");
+
+        const createProjectResponse = await fetch(`${runtime.baseUrl}/api/projects`, {
+          method: "POST",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            name: "Task API Project",
+          }),
+        });
+        const createProjectBody = (await createProjectResponse.json()) as {
+          project?: {
+            projectId: string;
+            workspaceId: string;
+          };
+        };
+
+        expect(createProjectResponse.status).toBe(201);
+
+        const createdProject = createProjectBody.project;
+
+        if (createdProject === undefined) {
+          throw new Error("expected project details for task API assertions");
+        }
+
+        const createPlanResponse = await fetch(
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/planner/runs`,
+          {
+            method: "POST",
+            headers: withSessionCookie(sessionCookie, {
+              "content-type": "application/json",
+            }),
+            body: JSON.stringify({
+              projectId: createdProject.projectId,
+              goal: "Wire task assignment APIs",
+            }),
+          },
+        );
+        const createPlanBody = (await createPlanResponse.json()) as {
+          plan?: {
+            runId?: string;
+          };
+        };
+
+        expect(createPlanResponse.status).toBe(201);
+
+        const planRunId = createPlanBody.plan?.runId;
+
+        if (planRunId === undefined) {
+          throw new Error("expected plan runId for task API assertions");
+        }
+
+        const tasksUrl =
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/tasks`;
+
+        await expectAuthenticationRequiredResponse(await fetch(tasksUrl));
+
+        const tasksResponse = await fetch(tasksUrl, {
+          headers: withSessionCookie(sessionCookie),
+        });
+        const tasksBody = (await tasksResponse.json()) as {
+          tasks?: Array<{
+            id?: string;
+            ownerRole?: string | null;
+            assignment?: {
+              roleKey?: string;
+              roleDisplayName?: string;
+              modelKey?: string | null;
+            } | null;
+          }>;
+        };
+
+        expect(tasksResponse.status).toBe(200);
+        expectNoStoreCacheControl(tasksResponse);
+        expect(tasksBody.tasks).toHaveLength(3);
+
+        const backendTask = tasksBody.tasks?.find(
+          (task) => task.ownerRole === "backend_agent",
+        );
+
+        expect(backendTask?.assignment).toMatchObject({
+          roleKey: "backend_agent",
+          roleDisplayName: "Backend Agent",
+          modelKey: "gpt-5",
+        });
+
+        const backendTaskId = backendTask?.id;
+
+        if (backendTaskId === undefined) {
+          throw new Error("expected backend task id for checkout assertions");
+        }
+
+        const checkoutUrl =
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/tasks/${encodeURIComponent(backendTaskId)}/checkout`;
+
+        const checkoutResponse = await fetch(checkoutUrl, {
+          method: "POST",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            runId: planRunId,
+            ownerType: "agent",
+            ownerId: "backend_agent",
+          }),
+        });
+        const checkoutBody = (await checkoutResponse.json()) as {
+          task?: {
+            state?: string;
+            executionRunId?: string | null;
+            checkoutRunId?: string | null;
+            lockOwnerId?: string | null;
+          };
+        };
+
+        expect(checkoutResponse.status).toBe(200);
+        expectNoStoreCacheControl(checkoutResponse);
+        expect(checkoutBody.task).toMatchObject({
+          state: "in_progress",
+          executionRunId: planRunId,
+          checkoutRunId: planRunId,
+          lockOwnerId: "backend_agent",
+        });
+
+        const wrongRoleCheckoutResponse = await fetch(checkoutUrl, {
+          method: "POST",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            runId: "run-competing",
+            ownerType: "agent",
+            ownerId: "reviewer",
+          }),
+        });
+        const wrongRoleCheckoutBody =
+          (await wrongRoleCheckoutResponse.json()) as {
+            code?: string;
+            assignedRoleKey?: string | null;
+            attemptedRoleKey?: string;
+          };
+
+        expect(wrongRoleCheckoutResponse.status).toBe(409);
+        expectNoStoreCacheControl(wrongRoleCheckoutResponse);
+        expect(wrongRoleCheckoutBody).toMatchObject({
+          code: "task_assigned_to_another_role",
+          assignedRoleKey: "backend_agent",
+          attemptedRoleKey: "reviewer",
+        });
+
+        const lockedCheckoutResponse = await fetch(checkoutUrl, {
+          method: "POST",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            runId: "run-competing",
+            ownerType: "agent",
+            ownerId: "backend_agent",
+          }),
+        });
+        const lockedCheckoutBody = (await lockedCheckoutResponse.json()) as {
+          code?: string;
+          currentExecutionRunId?: string | null;
+          currentCheckoutRunId?: string | null;
+        };
+
+        expect(lockedCheckoutResponse.status).toBe(409);
+        expectNoStoreCacheControl(lockedCheckoutResponse);
+        expect(lockedCheckoutBody).toMatchObject({
+          code: "task_execution_locked",
+          currentExecutionRunId: planRunId,
+          currentCheckoutRunId: planRunId,
+        });
+
+        const releaseResponse = await fetch(
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/tasks/${encodeURIComponent(backendTaskId)}/release`,
+          {
+            method: "POST",
+            headers: withSessionCookie(sessionCookie, {
+              "content-type": "application/json",
+            }),
+            body: JSON.stringify({
+              runId: planRunId,
+              ownerType: "agent",
+              ownerId: "backend_agent",
+            }),
+          },
+        );
+        const releaseBody = (await releaseResponse.json()) as {
+          task?: {
+            executionRunId?: string | null;
+            checkoutRunId?: string | null;
+            lockOwnerId?: string | null;
+          };
+        };
+
+        expect(releaseResponse.status).toBe(200);
+        expectNoStoreCacheControl(releaseResponse);
+        expect(releaseBody.task).toMatchObject({
+          executionRunId: null,
+          checkoutRunId: planRunId,
+          lockOwnerId: "backend_agent",
+        });
+      } finally {
+        await runtime.stop();
+        await cleanup();
+      }
+    },
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
+  );
+
+  it(
     "adds Secure to session cookies when auth requests are forwarded as HTTPS",
     async () => {
       const { databaseFilePath, cleanup } = await createRuntimeDatabaseFilePath();
