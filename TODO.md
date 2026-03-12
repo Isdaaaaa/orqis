@@ -233,6 +233,11 @@ Safe to defer:
 - [ ] Add first run lifecycle states (`planned`, `running`, `waiting_approval`, `done`, `failed`)
   - Acceptance criteria: run state transitions are validated and invalid transitions are rejected.
 
+#### Hardening before Phase 4
+
+Unclassified:
+- [ ] Align workspace agent-thread navigation with saved role mappings so customized planner owner roles have matching visible thread labels and navigation entries
+
 ## Phase 4: Workflow hardening and integration
 
 - [ ] Add implementation/review/integration workflow commands in PM logic
