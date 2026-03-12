@@ -81,6 +81,30 @@ export interface WorkspaceTimelineStore {
   close(): void;
 }
 
+const ORQIS_AUDIT_SQL_FUNCTION_NAMES = {
+  actorType: "orqis_audit_actor_type",
+  actorId: "orqis_audit_actor_id",
+  correlationRunId: "orqis_audit_correlation_run_id",
+} as const;
+
+interface WorkspaceAuditSqlContext {
+  readonly actorType?: WorkspaceMessageActorType | null;
+  readonly actorId?: string | null;
+  readonly correlationRunId?: string | null;
+}
+
+export interface WorkspaceAuditSqlContextController {
+  clearContext(): void;
+  getCurrentContext(): Readonly<Required<WorkspaceAuditSqlContext>> | null;
+  runWithContext<T>(context: WorkspaceAuditSqlContext, run: () => T): T;
+}
+
+export interface WorkspaceTimelineDatabaseHandle {
+  readonly database: SqliteDatabaseSync;
+  readonly auditContext: WorkspaceAuditSqlContextController;
+  close(): void;
+}
+
 class WorkspaceTimelineError extends Error {
   constructor(message: string) {
     super(message);
@@ -142,6 +166,102 @@ function normalizeRequiredString(value: string, label: string): string {
   }
 
   return normalized;
+}
+
+function normalizeAuditOptionalString(
+  value: string | null | undefined,
+  label: string,
+): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const normalized = value.trim();
+
+  if (normalized.length === 0) {
+    throw new WorkspaceTimelineValidationError(
+      `${label} must be a non-empty string when provided.`,
+    );
+  }
+
+  return normalized;
+}
+
+function normalizeAuditActorType(
+  actorType: WorkspaceMessageActorType | null | undefined,
+): WorkspaceMessageActorType | null {
+  if (actorType === null || actorType === undefined) {
+    return null;
+  }
+
+  if (!isWorkspaceMessageActorType(actorType)) {
+    throw new WorkspaceTimelineValidationError(
+      `audit actorType must be one of: ${WORKSPACE_MESSAGE_ACTOR_TYPES.join(", ")}.`,
+    );
+  }
+
+  return actorType;
+}
+
+function normalizeAuditContext(
+  context: WorkspaceAuditSqlContext,
+): Required<WorkspaceAuditSqlContext> {
+  const actorType = normalizeAuditActorType(context.actorType);
+  const actorId = normalizeAuditOptionalString(context.actorId, "audit actorId");
+  const correlationRunId = normalizeAuditOptionalString(
+    context.correlationRunId,
+    "audit correlationRunId",
+  );
+
+  if (actorId !== null && actorType === null) {
+    throw new WorkspaceTimelineValidationError(
+      "audit actorType must be provided when audit actorId is set.",
+    );
+  }
+
+  return {
+    actorType,
+    actorId,
+    correlationRunId,
+  };
+}
+
+function createWorkspaceAuditSqlContextController(): WorkspaceAuditSqlContextController {
+  let currentContext: Required<WorkspaceAuditSqlContext> | null = null;
+
+  return {
+    clearContext(): void {
+      currentContext = null;
+    },
+    getCurrentContext(): Required<WorkspaceAuditSqlContext> | null {
+      return currentContext;
+    },
+    runWithContext<T>(context: WorkspaceAuditSqlContext, run: () => T): T {
+      const previousContext = currentContext;
+      currentContext = normalizeAuditContext(context);
+
+      try {
+        return run();
+      } finally {
+        currentContext = previousContext;
+      }
+    },
+  };
+}
+
+function registerWorkspaceAuditSqlFunctions(
+  database: SqliteDatabaseSync,
+  getCurrentContext: () => WorkspaceAuditSqlContext | null | undefined,
+): void {
+  database.function(ORQIS_AUDIT_SQL_FUNCTION_NAMES.actorType, () => {
+    return getCurrentContext()?.actorType ?? null;
+  });
+  database.function(ORQIS_AUDIT_SQL_FUNCTION_NAMES.actorId, () => {
+    return getCurrentContext()?.actorId ?? null;
+  });
+  database.function(ORQIS_AUDIT_SQL_FUNCTION_NAMES.correlationRunId, () => {
+    return getCurrentContext()?.correlationRunId ?? null;
+  });
 }
 
 function isWorkspaceMessageActorType(
@@ -333,18 +453,29 @@ function createProjectSlug(name: string): string {
   return slug.length > 0 ? slug : "project";
 }
 
-function createWorkspaceTimelineDatabase(
+export function createWorkspaceTimelineDatabaseHandle(
   databaseFilePath: string,
-): SqliteDatabaseSync {
+): WorkspaceTimelineDatabaseHandle {
   validateWorkspaceTimelinePersistenceRuntime();
 
   let database: SqliteDatabaseSync | undefined;
 
   try {
+    mkdirSync(dirname(databaseFilePath), { recursive: true });
     database = new BetterSqlite3(databaseFilePath);
+    const auditContext = createWorkspaceAuditSqlContextController();
     database.pragma("foreign_keys = ON");
     applySchemaMigrations(database);
-    return database;
+    registerWorkspaceAuditSqlFunctions(database, () =>
+      auditContext.getCurrentContext(),
+    );
+    return {
+      database,
+      auditContext,
+      close(): void {
+        database?.close();
+      },
+    };
   } catch (error) {
     database?.close();
 
@@ -357,12 +488,13 @@ function createWorkspaceTimelineDatabase(
 }
 
 class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
+  private readonly databaseHandle: WorkspaceTimelineDatabaseHandle;
   private readonly database: SqliteDatabaseSync;
   private closed = false;
 
   constructor(readonly databaseFilePath: string) {
-    mkdirSync(dirname(databaseFilePath), { recursive: true });
-    this.database = createWorkspaceTimelineDatabase(databaseFilePath);
+    this.databaseHandle = createWorkspaceTimelineDatabaseHandle(databaseFilePath);
+    this.database = this.databaseHandle.database;
   }
 
   listProjects(): ProjectWorkspaceSummary[] {
@@ -543,7 +675,7 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
     }
 
     this.closed = true;
-    this.database.close();
+    this.databaseHandle.close();
   }
 
   private ensureWorkspace(

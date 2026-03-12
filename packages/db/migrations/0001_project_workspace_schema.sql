@@ -341,6 +341,212 @@ CREATE INDEX `audit_events_entity_created_at_idx` ON `audit_events` (`entity_typ
 CREATE INDEX `audit_events_run_created_at_idx` ON `audit_events` (`run_id`, `created_at`);
 CREATE INDEX `audit_events_actor_created_at_idx` ON `audit_events` (`actor_type`, `actor_id`, `created_at`);
 
+CREATE TRIGGER `runs_audit_insert`
+AFTER INSERT ON `runs`
+BEGIN
+  INSERT INTO `audit_events` (
+    `id`,
+    `project_id`,
+    `workspace_id`,
+    `run_id`,
+    `actor_type`,
+    `actor_id`,
+    `entity_type`,
+    `entity_id`,
+    `action`
+  )
+  VALUES (
+    lower(hex(randomblob(16))),
+    NEW.`project_id`,
+    NEW.`workspace_id`,
+    NEW.`id`,
+    COALESCE(orqis_audit_actor_type(), 'system'),
+    orqis_audit_actor_id(),
+    'run',
+    NEW.`id`,
+    'run.created'
+  );
+END;
+
+CREATE TRIGGER `runs_audit_update`
+AFTER UPDATE ON `runs`
+BEGIN
+  INSERT INTO `audit_events` (
+    `id`,
+    `project_id`,
+    `workspace_id`,
+    `run_id`,
+    `actor_type`,
+    `actor_id`,
+    `entity_type`,
+    `entity_id`,
+    `action`
+  )
+  VALUES (
+    lower(hex(randomblob(16))),
+    NEW.`project_id`,
+    NEW.`workspace_id`,
+    NEW.`id`,
+    COALESCE(orqis_audit_actor_type(), 'system'),
+    orqis_audit_actor_id(),
+    'run',
+    NEW.`id`,
+    'run.updated'
+  );
+END;
+
+CREATE TRIGGER `tasks_audit_insert`
+AFTER INSERT ON `tasks`
+BEGIN
+  INSERT INTO `audit_events` (
+    `id`,
+    `project_id`,
+    `workspace_id`,
+    `run_id`,
+    `task_id`,
+    `actor_type`,
+    `actor_id`,
+    `entity_type`,
+    `entity_id`,
+    `action`
+  )
+  VALUES (
+    lower(hex(randomblob(16))),
+    NEW.`project_id`,
+    NEW.`workspace_id`,
+    COALESCE(
+      NEW.`execution_run_id`,
+      NEW.`checkout_run_id`,
+      NEW.`run_id`,
+      orqis_audit_correlation_run_id()
+    ),
+    NEW.`id`,
+    COALESCE(orqis_audit_actor_type(), 'system'),
+    orqis_audit_actor_id(),
+    'task',
+    NEW.`id`,
+    'task.created'
+  );
+END;
+
+CREATE TRIGGER `tasks_audit_update`
+AFTER UPDATE ON `tasks`
+BEGIN
+  INSERT INTO `audit_events` (
+    `id`,
+    `project_id`,
+    `workspace_id`,
+    `run_id`,
+    `task_id`,
+    `actor_type`,
+    `actor_id`,
+    `entity_type`,
+    `entity_id`,
+    `action`
+  )
+  VALUES (
+    lower(hex(randomblob(16))),
+    NEW.`project_id`,
+    NEW.`workspace_id`,
+    COALESCE(
+      NEW.`execution_run_id`,
+      NEW.`checkout_run_id`,
+      NEW.`run_id`,
+      orqis_audit_correlation_run_id()
+    ),
+    NEW.`id`,
+    COALESCE(orqis_audit_actor_type(), 'system'),
+    orqis_audit_actor_id(),
+    'task',
+    NEW.`id`,
+    'task.updated'
+  );
+END;
+
+CREATE TRIGGER `approvals_audit_insert`
+AFTER INSERT ON `approvals`
+BEGIN
+  INSERT INTO `audit_events` (
+    `id`,
+    `project_id`,
+    `workspace_id`,
+    `run_id`,
+    `task_id`,
+    `approval_id`,
+    `actor_type`,
+    `actor_id`,
+    `entity_type`,
+    `entity_id`,
+    `action`
+  )
+  VALUES (
+    lower(hex(randomblob(16))),
+    NEW.`project_id`,
+    NEW.`workspace_id`,
+    COALESCE(
+      NEW.`run_id`,
+      orqis_audit_correlation_run_id()
+    ),
+    NEW.`task_id`,
+    NEW.`id`,
+    COALESCE(
+      orqis_audit_actor_type(),
+      NEW.`requested_by_actor_type`,
+      'system'
+    ),
+    COALESCE(
+      orqis_audit_actor_id(),
+      NEW.`requested_by_actor_id`
+    ),
+    'approval',
+    NEW.`id`,
+    'approval.created'
+  );
+END;
+
+CREATE TRIGGER `approvals_audit_update`
+AFTER UPDATE ON `approvals`
+BEGIN
+  INSERT INTO `audit_events` (
+    `id`,
+    `project_id`,
+    `workspace_id`,
+    `run_id`,
+    `task_id`,
+    `approval_id`,
+    `actor_type`,
+    `actor_id`,
+    `entity_type`,
+    `entity_id`,
+    `action`
+  )
+  VALUES (
+    lower(hex(randomblob(16))),
+    NEW.`project_id`,
+    NEW.`workspace_id`,
+    COALESCE(
+      NEW.`run_id`,
+      orqis_audit_correlation_run_id()
+    ),
+    NEW.`task_id`,
+    NEW.`id`,
+    COALESCE(
+      orqis_audit_actor_type(),
+      NEW.`decision_by_actor_type`,
+      NEW.`requested_by_actor_type`,
+      'system'
+    ),
+    COALESCE(
+      orqis_audit_actor_id(),
+      NEW.`decision_by_actor_id`,
+      NEW.`requested_by_actor_id`
+    ),
+    'approval',
+    NEW.`id`,
+    'approval.updated'
+  );
+END;
+
 CREATE TRIGGER `audit_events_no_update`
 BEFORE UPDATE ON `audit_events`
 BEGIN

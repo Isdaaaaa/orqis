@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Start Phase 3 with service-level task claim/ownership invariants (single active execution lock and deterministic conflict errors).
+Harden local session cookie/auth response headers for tunnel exposure (`Secure` cookie behavior when request origin is HTTPS and `Cache-Control: no-store` on auth-sensitive HTML/API responses).
 
 ## Completed
 
@@ -68,7 +68,10 @@ Safe to defer while Phase 2 starts:
 - [ ] Tighten `orqis init --health-timeout-ms` validation to reject non-numeric suffix input (for example `10abc`)
 - [ ] Add CLI regression coverage that asserts `--health-timeout-ms` rejects non-numeric suffix input (for example `10abc`)
 - [ ] Add signal-shutdown test coverage for `waitForRuntimeShutdown` (listener cleanup and runtime stop invocation)
-- [ ] Harden the `orqis init` smoke test against reserved-port race conditions (avoid probe-release-then-bind assumptions)
+- [x] Harden the `orqis init` smoke test against reserved-port race conditions (avoid probe-release-then-bind assumptions)
+  - Summary: Reworked the CLI smoke test to boot the real web runtime on an ephemeral port through the injected runtime dependency, eliminating the probe-release-then-bind race under `pnpm -r test`.
+  - Summary (follow-up): Widened the real-runtime smoke-test timeout budget so the CLI workspace-load path remains stable under the default `pnpm -r test` command after removing the reserved-port probe.
+  - Changed: `apps/cli/test/init.test.ts`, `TODO.md`.
 - [ ] Add an integration test that runs the real `apps/web/src/runtime-process.ts` entrypoint and asserts IPC ready/start-error messages plus graceful shutdown on parent disconnect
 - [ ] Add tunnel stop lifecycle regression coverage for the race where a child process exits between `hasExited` checks and stop-listener attachment
 
@@ -157,24 +160,37 @@ Safe to defer while Phase 2 starts:
 #### Hardening before Phase 3
 
 Must finish before Phase 3:
-- [ ] Enforce task claim/ownership invariants at service level (single active execution lock per task and deterministic conflict errors)
-- [ ] Add regression tests proving guarded task/run transitions are blocked until required approvals are resolved
-- [ ] Add regression tests proving all task/approval/run mutations emit audit events with actor and run correlation metadata
-- [ ] Add migration regression coverage for `messages`/`tasks`/`approvals` update-path guards so same-project/workspace linked ref triggers are verified on updates, not only inserts
-- [ ] Add web-runtime auth regression coverage for session lifecycle edges (`DELETE /api/session` cookie clearing, authenticated `GET /login` redirect, and unauthorized `GET/POST /api/workspaces/:workspaceId/messages`)
-- [ ] Harden local session cookie/auth response headers for tunnel exposure (`Secure` cookie behavior when request origin is HTTPS and `Cache-Control: no-store` on auth-sensitive HTML/API responses)
+- [x] Enforce task claim/ownership invariants at service level (single active execution lock per task and deterministic conflict errors)
+  - Summary: Added a core task-claim service with compare-and-swap claim/release operations, explicit claimable-state enforcement, and typed deterministic conflict errors for execution-lock, checkout, and owner collisions.
+  - Summary (follow-up): Added regression coverage for idempotent reclaims, release behavior, and compare-and-swap race reclassification so concurrent lock contention resolves to stable conflict codes instead of generic concurrency failures.
+  - Summary (follow-up): Narrowed execution release to preserve checkout ownership metadata and replaced the retry-limit fallback with a typed concurrent-update conflict when compare-and-swap contention never settles.
+  - Changed: `packages/core/src/task-claim-service.ts`, `packages/core/src/index.ts`, `packages/core/test/task-claim-service.test.ts`, `TODO.md`.
+- [x] Add regression tests proving guarded task/run transitions are blocked until required approvals are resolved
+  - Summary: Added a repository-backed core approval-guarded transition service that owns task/run state mutations and blocks guarded transitions from leaving `waiting_approval` while related approvals remain unresolved.
+  - Summary (follow-up): Added regression coverage against the public transition API for task and run mutations with `pending`/`resubmitted` approvals plus resolved approval pass-through for approval-driven retry/completion paths.
+  - Summary (follow-up): Tightened transition semantics so stale `from` requests now raise deterministic conflicts even when the entity already equals the requested target state.
+  - Changed: `packages/core/src/approval-guarded-transition-service.ts`, `packages/core/src/index.ts`, `packages/core/test/approval-guarded-transition-service.test.ts`, `TODO.md`.
+- [x] Add regression tests proving all task/approval/run mutations emit audit events with actor and run correlation metadata
+  - Summary: Added migration-backed audit-event triggers for run/task/approval inserts and updates, plus executable regression coverage that proves emitted events carry actor metadata and run correlation.
+  - Summary (follow-up): Replaced the shared `audit_context` table with connection-local audit SQL functions and scoped test contexts so actor metadata cannot leak across unrelated mutations.
+  - Summary (follow-up): Registered the audit SQL functions on the real web-runtime `better-sqlite3` connection and added a runtime-level regression so task/run/approval writes no longer pass only in the `sql.js` harness.
+  - Summary (follow-up): Widened the slow web integration-test timeout budgets so the new real-SQLite audit regression stays stable during branch-level parallel validation instead of timing out under worker contention.
+  - Changed: `packages/db/migrations/0001_project_workspace_schema.sql`, `packages/db/src/audit-sql-context.ts`, `packages/db/src/index.ts`, `packages/db/src/schema.ts`, `packages/db/test/migrations.test.ts`, `apps/web/src/persistence.ts`, `apps/web/test/persistence-audit.test.ts`, `apps/web/test/runtime.test.ts`, `apps/web/test/timeline-persistence.test.ts`, `TODO.md`.
+- [x] Add migration regression coverage for `messages`/`tasks`/`approvals` update-path guards so same-project/workspace linked ref triggers are verified on updates, not only inserts
+  - Summary: Added executable migration regression coverage for `messages`, `tasks`, and `approvals` update-path guard failures when linked `run_id`/`task_id` refs are changed to a different project/workspace after insert.
+  - Summary (follow-up): Added ownership-update regression coverage proving the same linked-ref triggers still reject cross-project/workspace mismatches when an existing row is moved instead of re-linked.
+  - Changed: `packages/db/test/migrations.test.ts`, `TODO.md`.
+- [x] Add web-runtime auth regression coverage for session lifecycle edges (`DELETE /api/session` cookie clearing, authenticated `GET /login` redirect, and unauthorized `GET/POST /api/workspaces/:workspaceId/messages`)
+  - Summary: Added focused web-runtime auth regression coverage for authenticated `/login` redirects, `DELETE /api/session` cookie clearing plus session invalidation, and unauthorized `GET`/`POST` workspace-message API requests.
+  - Changed: `apps/web/test/runtime.test.ts`, `TODO.md`.
+- [x] Harden local session cookie/auth response headers for tunnel exposure (`Secure` cookie behavior when request origin is HTTPS and `Cache-Control: no-store` on auth-sensitive HTML/API responses)
+  - Summary: Added HTTPS-aware session cookie issuance/clearing so tunnel-forwarded auth requests append `Secure`, and marked login, workspace-shell, redirect, and API responses as `Cache-Control: no-store` to avoid caching auth-sensitive content.
+  - Changed: `apps/web/src/index.ts`, `apps/web/test/runtime.test.ts`, `TODO.md`.
 
 Safe to defer:
 - [ ] Add migration regression coverage proving `parent_task_id` and `parent_message_id` are nulled on parent delete after composite lineage constraints
 - [ ] Add web-runtime API regression coverage for `GET/POST /api/workspaces/:workspaceId/messages` (validation errors, project/workspace conflict responses, and chronological payload ordering)
 - [ ] Harden web-runtime shutdown to close keep-alive connections promptly so `runtime.stop()` does not block for multi-second idle timeouts after request traffic
-
-Move to later phase:
-- [ ] Persist selected project, section, and thread in URL/local state so refresh restores workspace context
-- [ ] Add keyboard/a11y navigation coverage for project rail and workspace channel list (focus order, `aria-current`, and section/thread activation)
-- [ ] Add responsive sidebar-collapse behavior and regression coverage so the fixed composer does not obscure timeline content on narrow viewports
-- [ ] Add browser regression coverage for workspace-shell script initialization and quick-project popover visibility (prevent parse-time JS failures and clipped rail popover interactions)
-- [ ] Add query helpers for issue/task-centric run history so timeline and run drill-down share one contract (Phase 4 timeline/read-model hardening)
 
 ## Phase 3: Project Manager planning and task approvals
 
@@ -206,8 +222,23 @@ Move to later phase:
   - Acceptance criteria: key actions (task create/assign, approval, run status changes) are traceable in UI.
   - Acceptance criteria: timeline supports filtering by actor, entity, and run/task correlation.
 
+- [ ] Persist selected project, section, and thread in URL/local state so refresh restores workspace context
+  - Acceptance criteria: refresh restores the active project, selected workspace section, and open thread without manual reselection.
+
+- [ ] Add query helpers for issue/task-centric run history so timeline and run drill-down share one contract
+  - Acceptance criteria: timeline and run drill-down flows read issue/task-centric run history through one shared query contract.
+
 - [ ] Add browser e2e checks for bootstrap + project + workspace + approval happy path
   - Acceptance criteria: Playwright suite covers one full user journey and runs in CI.
+
+- [ ] Add keyboard/a11y navigation coverage for project rail and workspace channel list (focus order, `aria-current`, and section/thread activation)
+  - Acceptance criteria: keyboard navigation coverage verifies focus order, activation behavior, and `aria-current` state across the workspace shell navigation.
+
+- [ ] Add responsive sidebar-collapse behavior and regression coverage so the fixed composer does not obscure timeline content on narrow viewports
+  - Acceptance criteria: narrow viewport behavior collapses sidebars intentionally and keeps timeline content/composer interactions unobscured.
+
+- [ ] Add browser regression coverage for workspace-shell script initialization and quick-project popover visibility (prevent parse-time JS failures and clipped rail popover interactions)
+  - Acceptance criteria: browser regressions catch workspace-shell script initialization failures and quick-project popover visibility/clipping issues.
 
 ## Later: Parallel execution and repository workflows
 

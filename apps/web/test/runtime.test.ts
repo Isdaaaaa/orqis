@@ -34,13 +34,19 @@ function resolveSessionCookieValue(setCookieHeader: string | null): string {
   return cookie;
 }
 
-async function createSessionCookie(
+async function createSession(
   baseUrl: string,
   actorId: string,
-): Promise<string> {
+  headers: Record<string, string> = {},
+): Promise<{
+  readonly cacheControl: string | null;
+  readonly sessionCookie: string;
+  readonly setCookieHeader: string;
+}> {
   const createSessionResponse = await fetch(`${baseUrl}/api/session`, {
     method: "POST",
     headers: {
+      ...headers,
       "content-type": "application/json",
     },
     body: JSON.stringify({
@@ -59,7 +65,25 @@ async function createSessionCookie(
   expect(createSessionBody.authenticated).toBe(true);
   expect(createSessionBody.session?.actorId).toBe(actorId);
 
-  return resolveSessionCookieValue(createSessionResponse.headers.get("set-cookie"));
+  const setCookieHeader = createSessionResponse.headers.get("set-cookie");
+
+  if (setCookieHeader === null || setCookieHeader.length === 0) {
+    throw new Error("expected set-cookie header for session creation response");
+  }
+
+  return {
+    cacheControl: createSessionResponse.headers.get("cache-control"),
+    sessionCookie: resolveSessionCookieValue(setCookieHeader),
+    setCookieHeader,
+  };
+}
+
+async function createSessionCookie(
+  baseUrl: string,
+  actorId: string,
+): Promise<string> {
+  const session = await createSession(baseUrl, actorId);
+  return session.sessionCookie;
 }
 
 function withSessionCookie(
@@ -70,6 +94,19 @@ function withSessionCookie(
     ...headers,
     cookie: sessionCookie,
   };
+}
+
+async function expectAuthenticationRequiredResponse(
+  response: Response,
+): Promise<void> {
+  const body = (await response.json()) as { error?: string };
+
+  expect(response.status).toBe(401);
+  expect(body.error).toBe("Authentication required.");
+}
+
+function expectNoStoreCacheControl(response: Response): void {
+  expect(response.headers.get("cache-control")).toBe("no-store");
 }
 
 describe("@orqis/web runtime", () => {
@@ -106,12 +143,14 @@ describe("@orqis/web runtime", () => {
 
         expect(unauthorizedLandingResponse.status).toBe(302);
         expect(unauthorizedLandingResponse.headers.get("location")).toBe("/login");
+        expectNoStoreCacheControl(unauthorizedLandingResponse);
 
         const loginPageResponse = await fetch(`${runtime.baseUrl}/login`);
         const loginPage = await loginPageResponse.text();
 
         expect(loginPageResponse.status).toBe(200);
         expect(loginPage).toContain("Sign in to Orqis");
+        expectNoStoreCacheControl(loginPageResponse);
 
         const unauthorizedProjectsResponse = await fetch(`${runtime.baseUrl}/api/projects`);
         const unauthorizedProjectsBody =
@@ -119,6 +158,7 @@ describe("@orqis/web runtime", () => {
 
         expect(unauthorizedProjectsResponse.status).toBe(401);
         expect(unauthorizedProjectsBody.error).toBe("Authentication required.");
+        expectNoStoreCacheControl(unauthorizedProjectsResponse);
 
         const sessionCookie = await createSessionCookie(runtime.baseUrl, "owner");
 
@@ -135,6 +175,7 @@ describe("@orqis/web runtime", () => {
         expect(sessionResponse.status).toBe(200);
         expect(sessionBody.authenticated).toBe(true);
         expect(sessionBody.session?.actorId).toBe("owner");
+        expectNoStoreCacheControl(sessionResponse);
 
         const firstLandingResponse = await fetch(runtime.baseUrl, {
           headers: withSessionCookie(sessionCookie),
@@ -151,18 +192,164 @@ describe("@orqis/web runtime", () => {
         expect(firstLandingPage).toContain("PM -> Reviewer");
         expect(firstLandingPage).toContain("Assigned Agents");
         expect(firstLandingPage).toContain("Log out");
+        expectNoStoreCacheControl(firstLandingResponse);
 
         const refreshedLandingResponse = await fetch(runtime.baseUrl, {
           headers: withSessionCookie(sessionCookie),
         });
 
         expect(refreshedLandingResponse.status).toBe(200);
+        expectNoStoreCacheControl(refreshedLandingResponse);
       } finally {
         await runtime.stop();
         await cleanup();
       }
     },
-    45_000,
+    75_000,
+  );
+
+  it(
+    "covers auth session lifecycle edges for login redirect, logout cookie clearing, and workspace message protection",
+    async () => {
+      const { databaseFilePath, cleanup } = await createRuntimeDatabaseFilePath();
+      const runtime = await startOrqisWebRuntime({
+        host: "127.0.0.1",
+        port: 0,
+        persistence: {
+          databaseFilePath,
+        },
+      });
+
+      try {
+        const workspaceMessagesUrl =
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent("workspace-edge")}/messages`;
+
+        await expectAuthenticationRequiredResponse(
+          await fetch(workspaceMessagesUrl),
+        );
+
+        await expectAuthenticationRequiredResponse(
+          await fetch(workspaceMessagesUrl, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({
+              projectId: "project-edge",
+              actorType: "user",
+              actorId: "owner",
+              content: "Unauthorized message",
+            }),
+          }),
+        );
+
+        const sessionCookie = await createSessionCookie(runtime.baseUrl, "owner");
+
+        const authenticatedLoginResponse = await fetch(`${runtime.baseUrl}/login`, {
+          headers: withSessionCookie(sessionCookie),
+          redirect: "manual",
+        });
+
+        expect(authenticatedLoginResponse.status).toBe(302);
+        expect(authenticatedLoginResponse.headers.get("location")).toBe("/");
+        expectNoStoreCacheControl(authenticatedLoginResponse);
+
+        const deleteSessionResponse = await fetch(`${runtime.baseUrl}/api/session`, {
+          method: "DELETE",
+          headers: withSessionCookie(sessionCookie),
+        });
+        const deleteSessionBody = (await deleteSessionResponse.json()) as {
+          authenticated?: boolean;
+        };
+        const clearedSessionCookie = deleteSessionResponse.headers.get("set-cookie");
+
+        expect(deleteSessionResponse.status).toBe(200);
+        expect(deleteSessionBody).toEqual({
+          authenticated: false,
+        });
+        expect(clearedSessionCookie).toContain("orqis_session=");
+        expect(clearedSessionCookie).toContain("Path=/");
+        expect(clearedSessionCookie).toContain("Max-Age=0");
+        expect(clearedSessionCookie).toContain("HttpOnly");
+        expect(clearedSessionCookie).toContain("SameSite=Lax");
+        expectNoStoreCacheControl(deleteSessionResponse);
+
+        const postDeleteSessionResponse = await fetch(`${runtime.baseUrl}/api/session`, {
+          headers: withSessionCookie(sessionCookie),
+        });
+        const postDeleteSessionBody = (await postDeleteSessionResponse.json()) as {
+          authenticated?: boolean;
+          session?: null;
+        };
+
+        expect(postDeleteSessionResponse.status).toBe(200);
+        expect(postDeleteSessionBody).toEqual({
+          authenticated: false,
+          session: null,
+        });
+        expectNoStoreCacheControl(postDeleteSessionResponse);
+
+        const postDeleteLandingResponse = await fetch(runtime.baseUrl, {
+          headers: withSessionCookie(sessionCookie),
+          redirect: "manual",
+        });
+
+        expect(postDeleteLandingResponse.status).toBe(302);
+        expect(postDeleteLandingResponse.headers.get("location")).toBe("/login");
+        expectNoStoreCacheControl(postDeleteLandingResponse);
+      } finally {
+        await runtime.stop();
+        await cleanup();
+      }
+    },
+    75_000,
+  );
+
+  it(
+    "adds Secure to session cookies when auth requests are forwarded as HTTPS",
+    async () => {
+      const { databaseFilePath, cleanup } = await createRuntimeDatabaseFilePath();
+      const runtime = await startOrqisWebRuntime({
+        host: "127.0.0.1",
+        port: 0,
+        persistence: {
+          databaseFilePath,
+        },
+      });
+
+      try {
+        const localHttpSession = await createSession(runtime.baseUrl, "owner-local");
+        expect(localHttpSession.setCookieHeader).not.toContain("Secure");
+        expect(localHttpSession.cacheControl).toBe("no-store");
+
+        const forwardedHttpsSession = await createSession(
+          runtime.baseUrl,
+          "owner-tunnel",
+          {
+            "x-forwarded-proto": "https",
+          },
+        );
+
+        expect(forwardedHttpsSession.setCookieHeader).toContain("Secure");
+        expect(forwardedHttpsSession.cacheControl).toBe("no-store");
+
+        const deleteSessionResponse = await fetch(`${runtime.baseUrl}/api/session`, {
+          method: "DELETE",
+          headers: withSessionCookie(forwardedHttpsSession.sessionCookie, {
+            "x-forwarded-proto": "https",
+          }),
+        });
+        const clearedSessionCookie = deleteSessionResponse.headers.get("set-cookie");
+
+        expect(deleteSessionResponse.status).toBe(200);
+        expect(clearedSessionCookie).toContain("Secure");
+        expectNoStoreCacheControl(deleteSessionResponse);
+      } finally {
+        await runtime.stop();
+        await cleanup();
+      }
+    },
+    75_000,
   );
 
   it(
@@ -342,7 +529,7 @@ describe("@orqis/web runtime", () => {
         await cleanup();
       }
     },
-    45_000,
+    75_000,
   );
 
   it(
@@ -372,6 +559,6 @@ describe("@orqis/web runtime", () => {
         await cleanup();
       }
     },
-    45_000,
+    75_000,
   );
 });
