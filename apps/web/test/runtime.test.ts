@@ -1020,7 +1020,7 @@ describe("@orqis/web runtime", () => {
   );
 
   it(
-    "supports authenticated task output submission, revision requests, resubmission, and approval decisions",
+    "supports authenticated task output submission, revision requests, resubmission, and approval decisions without manual checkout calls",
     async () => {
       const { databaseFilePath, cleanup } = await createRuntimeDatabaseFilePath();
       const runtime = await startOrqisWebRuntime({
@@ -1096,6 +1096,7 @@ describe("@orqis/web runtime", () => {
             id?: string;
             ownerRole?: string | null;
             title?: string;
+            state?: string;
           }>;
         };
 
@@ -1109,23 +1110,7 @@ describe("@orqis/web runtime", () => {
           throw new Error("expected backend task details for task approval assertions");
         }
 
-        const checkoutResponse = await fetch(
-          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/tasks/${encodeURIComponent(backendTask.id)}/checkout`,
-          {
-            method: "POST",
-            headers: withSessionCookie(sessionCookie, {
-              "content-type": "application/json",
-            }),
-            body: JSON.stringify({
-              runId: planRunId,
-              ownerType: "agent",
-              ownerId: "backend_agent",
-            }),
-          },
-        );
-
-        expect(checkoutResponse.status).toBe(200);
-        expectNoStoreCacheControl(checkoutResponse);
+        expect(backendTask.state).toBe("todo");
 
         const outputUrl =
           `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/tasks/${encodeURIComponent(backendTask.id)}/output`;
@@ -1205,23 +1190,6 @@ describe("@orqis/web runtime", () => {
           status: "revision_requested",
           decisionSummary: "Handle the retry path before merge.",
         });
-
-        const reclaimResponse = await fetch(
-          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/tasks/${encodeURIComponent(backendTask.id)}/checkout`,
-          {
-            method: "POST",
-            headers: withSessionCookie(sessionCookie, {
-              "content-type": "application/json",
-            }),
-            body: JSON.stringify({
-              runId: planRunId,
-              ownerType: "agent",
-              ownerId: "backend_agent",
-            }),
-          },
-        );
-
-        expect(reclaimResponse.status).toBe(200);
 
         const resubmittedOutputResponse = await fetch(outputUrl, {
           method: "POST",
