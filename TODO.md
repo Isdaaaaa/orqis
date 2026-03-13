@@ -295,8 +295,11 @@ Safe to defer:
   - Summary (follow-up): Fixed restored `assigned-agents` startup behavior so it now loads durable agent configuration even when no project exists yet, and added a runtime-shell regression assertion for that load path.
   - Changed: `apps/web/src/index.ts`, `apps/web/test/runtime.test.ts`, `README.md`, `TODO.md`.
 
-- [ ] Add query helpers for issue/task-centric run history so timeline and run drill-down share one contract
+- [x] Add query helpers for issue/task-centric run history so timeline and run drill-down share one contract
   - Acceptance criteria: timeline and run drill-down flows read issue/task-centric run history through one shared query contract.
+  - Summary: Added shared `taskId`/`runId` query helpers in persistence so timeline message reads and run-history drill-down reads resolve through one issue/task-centric filtering contract.
+  - Summary (follow-up): Exposed authenticated `GET /api/workspaces/:workspaceId/run-history` plus shared message-query filtering, then added persistence/runtime regression coverage that asserts both endpoints return aligned filtered histories.
+  - Changed: `apps/web/src/persistence.ts`, `apps/web/src/index.ts`, `apps/web/test/timeline-persistence.test.ts`, `apps/web/test/runtime.test.ts`, `README.md`, `TODO.md`.
 
 - [ ] Align workspace agent-thread navigation with saved role mappings
   - Acceptance criteria: customized planner owner roles have matching visible thread labels and navigation entries.

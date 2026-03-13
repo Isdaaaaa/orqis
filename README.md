@@ -84,7 +84,7 @@ Current runtime behavior:
 - `orqis init` requires tunnel binaries on `PATH` (`cloudflared` and/or `ngrok`), and supports `ORQIS_CLOUDFLARED_BIN` / `ORQIS_NGROK_BIN` when custom binary paths are needed.
 - `orqis init` now uses a 15-second default startup/health timeout window; use `--health-timeout-ms <ms>` to override it.
 - The web runtime now serves local session-auth endpoints at `GET /login` and `GET/POST/DELETE /api/session`.
-- Workspace shell and project/timeline APIs are protected: unauthenticated requests to `/`, `GET/POST /api/projects`, and `GET/POST /api/workspaces/:workspaceId/messages` require a login session.
+- Workspace shell and project/timeline APIs are protected: unauthenticated requests to `/`, `GET/POST /api/projects`, `GET /api/workspaces/:workspaceId/run-history`, and `GET/POST /api/workspaces/:workspaceId/messages` require a login session.
 - Login issues an `HttpOnly` local session cookie (`SameSite=Lax`) that persists across browser refreshes while the runtime stays up.
 - Session state is in-memory for now, so restarting the web runtime requires signing in again.
 - The `Assigned Agents` section now exposes persistent provider/model/agent-role configuration backed by SQLite and served through `GET/PUT /api/settings/agent-configuration`.
@@ -99,10 +99,11 @@ Current runtime behavior:
 - The workspace shell now includes an `Audit Timeline` section that renders append-only workflow events and supports in-UI filters for actor, entity, and run/task/approval correlation.
 - Workspace context is now persisted in both URL query params (`projectId`, `section`, `thread`) and local browser state, so refresh restores the selected project, section, and agent thread.
 - Authenticated audit timeline reads are available at `GET /api/workspaces/:workspaceId/audit-events`, with optional query filters: `actorType`, `actorId`, `entityType`, `entityId`, `runId`, `taskId`, `approvalId`, and `limit` (`1..500`, default `200`).
+- Authenticated task/run drill-down reads are available at `GET /api/workspaces/:workspaceId/run-history`, with shared query filters `taskId` and `runId`.
 - The web runtime now serves project APIs at `GET/POST /api/projects`, creating one persistent workspace mapping per project.
 - The landing UI supports project creation, project selection, and timeline loading for the selected project's workspace.
 - The web runtime now persists workspace timeline messages in SQLite (`orqis.db`) and serves timeline APIs at `GET/POST /api/workspaces/:workspaceId/messages`.
-- Timeline writes auto-provision workspace/project records when missing, and timeline reads return chronological message history scoped to one workspace.
+- Timeline writes auto-provision workspace/project records when missing, and timeline reads return chronological message history scoped to one workspace (optionally filtered by shared `taskId` / `runId` query helpers used by run drill-down reads).
 - When launched by `orqis init`, the runtime SQLite file defaults to the resolved Orqis config directory (including `--config-dir`), instead of always using `~/.orqis`.
 - Set `ORQIS_WEB_RUNTIME_DB_PATH` to override the SQLite file path used by the web runtime.
 - Web runtime startup now preflights `better-sqlite3` bindings and returns recovery commands when bindings are unavailable.

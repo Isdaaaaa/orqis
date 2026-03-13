@@ -1398,6 +1398,195 @@ describe("@orqis/web runtime", () => {
   );
 
   it(
+    "shares task/run history query filters between timeline and run-history APIs",
+    async () => {
+      const { databaseFilePath, cleanup } = await createRuntimeDatabaseFilePath();
+      const runtime = await startOrqisWebRuntime({
+        host: "127.0.0.1",
+        port: 0,
+        persistence: {
+          databaseFilePath,
+        },
+      });
+
+      try {
+        const sessionCookie = await createSessionCookie(runtime.baseUrl, "owner");
+
+        const createProjectResponse = await fetch(`${runtime.baseUrl}/api/projects`, {
+          method: "POST",
+          headers: withSessionCookie(sessionCookie, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            name: "Run History API Contract Project",
+          }),
+        });
+        const createProjectBody = (await createProjectResponse.json()) as {
+          project?: {
+            projectId: string;
+            workspaceId: string;
+          };
+        };
+
+        expect(createProjectResponse.status).toBe(201);
+
+        const createdProject = createProjectBody.project;
+
+        if (createdProject === undefined) {
+          throw new Error("expected project details for run-history API assertions");
+        }
+
+        const createPlanResponse = await fetch(
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/planner/runs`,
+          {
+            method: "POST",
+            headers: withSessionCookie(sessionCookie, {
+              "content-type": "application/json",
+            }),
+            body: JSON.stringify({
+              projectId: createdProject.projectId,
+              goal: "implement: wire shared run history API contract",
+            }),
+          },
+        );
+        const createPlanBody = (await createPlanResponse.json()) as {
+          plan?: {
+            runId?: string;
+          };
+        };
+
+        expect(createPlanResponse.status).toBe(201);
+
+        const planRunId = createPlanBody.plan?.runId;
+
+        if (planRunId === undefined) {
+          throw new Error("expected plan runId for run-history API assertions");
+        }
+
+        const tasksResponse = await fetch(
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/tasks`,
+          {
+            headers: withSessionCookie(sessionCookie),
+          },
+        );
+        const tasksBody = (await tasksResponse.json()) as {
+          tasks?: Array<{
+            id?: string;
+            ownerRole?: string | null;
+          }>;
+        };
+
+        expect(tasksResponse.status).toBe(200);
+        const backendTask = tasksBody.tasks?.find(
+          (task) => task.ownerRole === "backend_agent",
+        );
+        const backendTaskId = backendTask?.id;
+
+        if (backendTaskId === undefined) {
+          throw new Error("expected backend task for run-history API assertions");
+        }
+
+        const submitOutputResponse = await fetch(
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/tasks/${encodeURIComponent(backendTaskId)}/output`,
+          {
+            method: "POST",
+            headers: withSessionCookie(sessionCookie, {
+              "content-type": "application/json",
+            }),
+            body: JSON.stringify({
+              runId: planRunId,
+              ownerType: "agent",
+              ownerId: "backend_agent",
+              output: "Implemented shared run history API query helpers.",
+            }),
+          },
+        );
+
+        expect(submitOutputResponse.status).toBe(200);
+
+        const filteredTimelineResponse = await fetch(
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/messages?taskId=${encodeURIComponent(backendTaskId)}`,
+          {
+            headers: withSessionCookie(sessionCookie),
+          },
+        );
+        const filteredTimelineBody = (await filteredTimelineResponse.json()) as {
+          filters?: {
+            taskId?: string;
+          };
+          messages?: Array<{
+            id?: string;
+            runId?: string | null;
+          }>;
+        };
+
+        expect(filteredTimelineResponse.status).toBe(200);
+        expectNoStoreCacheControl(filteredTimelineResponse);
+        expect(filteredTimelineBody.filters?.taskId).toBe(backendTaskId);
+        expect(filteredTimelineBody.messages?.length ?? 0).toBeGreaterThan(0);
+        expect(
+          filteredTimelineBody.messages?.every((message) => message.runId === planRunId),
+        ).toBe(true);
+
+        const runHistoryResponse = await fetch(
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/run-history?taskId=${encodeURIComponent(backendTaskId)}`,
+          {
+            headers: withSessionCookie(sessionCookie),
+          },
+        );
+        const runHistoryBody = (await runHistoryResponse.json()) as {
+          filters?: {
+            taskId?: string;
+          };
+          history?: Array<{
+            runId?: string;
+            status?: string | null;
+            tasks?: Array<{
+              id?: string;
+            }>;
+            messages?: Array<{
+              id?: string;
+            }>;
+          }>;
+        };
+
+        expect(runHistoryResponse.status).toBe(200);
+        expectNoStoreCacheControl(runHistoryResponse);
+        expect(runHistoryBody.filters?.taskId).toBe(backendTaskId);
+        expect(runHistoryBody.history).toHaveLength(1);
+        expect(runHistoryBody.history?.[0]).toMatchObject({
+          runId: planRunId,
+          status: "waiting_approval",
+        });
+        expect(
+          runHistoryBody.history?.[0]?.tasks?.map((task) => task.id),
+        ).toContain(backendTaskId);
+        expect(
+          runHistoryBody.history?.[0]?.messages?.map((message) => message.id),
+        ).toEqual(filteredTimelineBody.messages?.map((message) => message.id));
+
+        const mismatchedRunResponse = await fetch(
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/run-history?taskId=${encodeURIComponent(backendTaskId)}&runId=${encodeURIComponent("run-unrelated")}`,
+          {
+            headers: withSessionCookie(sessionCookie),
+          },
+        );
+        const mismatchedRunBody = (await mismatchedRunResponse.json()) as {
+          history?: Array<unknown>;
+        };
+
+        expect(mismatchedRunResponse.status).toBe(200);
+        expectNoStoreCacheControl(mismatchedRunResponse);
+        expect(mismatchedRunBody.history).toEqual([]);
+      } finally {
+        await runtime.stop();
+        await cleanup();
+      }
+    },
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
+  );
+
+  it(
     "supports authenticated task output submission, revision requests, resubmission, and approval decisions without manual checkout calls",
     async () => {
       const { databaseFilePath, cleanup } = await createRuntimeDatabaseFilePath();

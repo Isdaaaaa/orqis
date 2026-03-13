@@ -70,10 +70,36 @@ export interface WorkspaceTimelineMessage {
   readonly id: string;
   readonly projectId: string;
   readonly workspaceId: string;
+  readonly runId: string | null;
   readonly actorType: WorkspaceMessageActorType;
   readonly actorId: string | null;
   readonly content: string;
   readonly createdAt: string;
+}
+
+export interface ListWorkspaceRunHistoryInput {
+  readonly runId?: string;
+  readonly taskId?: string;
+}
+
+export interface WorkspaceRunHistoryTaskRecord {
+  readonly id: string;
+  readonly title: string;
+  readonly state: TaskClaimServiceTaskState;
+  readonly ownerRole: string | null;
+  readonly ownerDisplayName: string | null;
+}
+
+export interface WorkspaceRunHistoryRecord {
+  readonly projectId: string;
+  readonly workspaceId: string;
+  readonly runId: string;
+  readonly status: RunLifecycleStatus | null;
+  readonly summary: string | null;
+  readonly startedAt: string | null;
+  readonly endedAt: string | null;
+  readonly tasks: readonly WorkspaceRunHistoryTaskRecord[];
+  readonly messages: readonly WorkspaceTimelineMessage[];
 }
 
 export interface WorkspaceAuditEventRecord {
@@ -291,6 +317,10 @@ export interface WorkspaceTimelineStore {
   createProject(input: CreateProjectInput): ProjectWorkspaceSummary;
   createProjectManagerPlan(input: CreateProjectManagerPlanInput): ProjectManagerPlanRecord;
   listWorkspaceTasks(workspaceId: string): WorkspaceTaskRecord[];
+  listWorkspaceRunHistory(
+    workspaceId: string,
+    input?: ListWorkspaceRunHistoryInput,
+  ): WorkspaceRunHistoryRecord[];
   listWorkspaceAuditEvents(
     workspaceId: string,
     input?: ListWorkspaceAuditEventsInput,
@@ -301,7 +331,10 @@ export interface WorkspaceTimelineStore {
   decideTaskApproval(
     input: DecideTaskApprovalInput,
   ): Promise<DecideTaskApprovalResult>;
-  listWorkspaceMessages(workspaceId: string): WorkspaceTimelineMessage[];
+  listWorkspaceMessages(
+    workspaceId: string,
+    input?: ListWorkspaceRunHistoryInput,
+  ): WorkspaceTimelineMessage[];
   getAgentConfiguration(): AgentConfiguration;
   saveAgentConfiguration(input: SaveAgentConfigurationInput): AgentConfiguration;
   appendWorkspaceMessage(
@@ -451,10 +484,32 @@ interface WorkspaceMessageRow {
   readonly id: string;
   readonly projectId: string;
   readonly workspaceId: string;
+  readonly runId: string | null;
   readonly actorType: WorkspaceMessageActorType;
   readonly actorId: string | null;
   readonly content: string;
   readonly createdAt: string;
+}
+
+interface WorkspaceRunHistoryTaskRow {
+  readonly id: string;
+  readonly runId: string | null;
+  readonly checkoutRunId: string | null;
+  readonly executionRunId: string | null;
+  readonly title: string;
+  readonly state: TaskClaimServiceTaskState;
+  readonly ownerRole: string | null;
+  readonly ownerDisplayName: string | null;
+}
+
+interface WorkspaceRunHistoryRunRow {
+  readonly id: string;
+  readonly projectId: string;
+  readonly workspaceId: string;
+  readonly status: RunLifecycleStatus;
+  readonly summary: string | null;
+  readonly startedAt: string | null;
+  readonly endedAt: string | null;
 }
 
 interface WorkspaceAuditEventRow {
@@ -570,6 +625,12 @@ interface SchemaMigrationRow {
 type TaskClaimSnapshot = Parameters<
   TaskClaimRepository["compareAndSwapTaskClaim"]
 >[1];
+
+interface WorkspaceRunHistoryQueryScope {
+  readonly workspaceId: string;
+  readonly runIds: readonly string[] | null;
+  readonly task: WorkspaceTaskRecord | null;
+}
 
 function normalizeOptionalString(value: unknown): string | undefined {
   if (typeof value !== "string") {
@@ -837,6 +898,19 @@ function mapWorkspaceAuditEventRow(
     entityId: row.entityId,
     action: row.action,
     detailsJson: row.detailsJson,
+    createdAt: row.createdAt,
+  };
+}
+
+function mapWorkspaceMessageRow(row: WorkspaceMessageRow): WorkspaceTimelineMessage {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    workspaceId: row.workspaceId,
+    runId: row.runId,
+    actorType: row.actorType,
+    actorId: row.actorId,
+    content: row.content,
     createdAt: row.createdAt,
   };
 }
@@ -1508,6 +1582,164 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
     return this.queryWorkspaceTasks(normalizedWorkspaceId);
   }
 
+  listWorkspaceRunHistory(
+    workspaceId: string,
+    input: ListWorkspaceRunHistoryInput = {},
+  ): WorkspaceRunHistoryRecord[] {
+    const scope = this.resolveWorkspaceRunHistoryQueryScope(workspaceId, input);
+    const messages = this.queryWorkspaceMessages(scope);
+    const filteredRunIds = new Set<string>();
+
+    for (const message of messages) {
+      if (message.runId !== null) {
+        filteredRunIds.add(message.runId);
+      }
+    }
+
+    if (scope.runIds !== null) {
+      for (const runId of scope.runIds) {
+        filteredRunIds.add(runId);
+      }
+    }
+
+    if (filteredRunIds.size === 0) {
+      return [];
+    }
+
+    const runIds = Array.from(filteredRunIds);
+    type MutableRunHistoryRecord = {
+      projectId: string;
+      workspaceId: string;
+      runId: string;
+      status: RunLifecycleStatus | null;
+      summary: string | null;
+      startedAt: string | null;
+      endedAt: string | null;
+      tasks: WorkspaceRunHistoryTaskRecord[];
+      messages: WorkspaceTimelineMessage[];
+    };
+    const recordsByRunId = new Map<string, MutableRunHistoryRecord>();
+    const runRows = this.database
+      .prepare(
+        [
+          "SELECT",
+          "  id,",
+          "  project_id AS projectId,",
+          "  workspace_id AS workspaceId,",
+          "  status,",
+          "  summary,",
+          "  started_at AS startedAt,",
+          "  ended_at AS endedAt",
+          "FROM runs",
+          `WHERE id IN (${runIds.map(() => "?").join(", ")})`,
+          "ORDER BY created_at ASC, rowid ASC",
+        ].join("\n"),
+      )
+      .all(...runIds) as WorkspaceRunHistoryRunRow[];
+
+    for (const runRow of runRows) {
+      recordsByRunId.set(runRow.id, {
+        projectId: runRow.projectId,
+        workspaceId: runRow.workspaceId,
+        runId: runRow.id,
+        status: runRow.status,
+        summary: runRow.summary,
+        startedAt: runRow.startedAt,
+        endedAt: runRow.endedAt,
+        tasks: [],
+        messages: [],
+      });
+    }
+
+    const taskRows = this.database
+      .prepare(
+        [
+          "SELECT",
+          "  tasks.id,",
+          "  tasks.run_id AS runId,",
+          "  tasks.checkout_run_id AS checkoutRunId,",
+          "  tasks.execution_run_id AS executionRunId,",
+          "  tasks.title,",
+          "  tasks.state,",
+          "  tasks.owner_role AS ownerRole,",
+          "  task_assignments.role_display_name AS ownerDisplayName",
+          "FROM tasks",
+          "LEFT JOIN task_assignments ON task_assignments.task_id = tasks.id",
+          "WHERE tasks.workspace_id = ?",
+          `  AND (tasks.run_id IN (${runIds.map(() => "?").join(", ")})`,
+          `    OR tasks.checkout_run_id IN (${runIds.map(() => "?").join(", ")})`,
+          `    OR tasks.execution_run_id IN (${runIds.map(() => "?").join(", ")}))`,
+          "ORDER BY tasks.created_at ASC, tasks.rowid ASC",
+        ].join("\n"),
+      )
+      .all(
+        scope.workspaceId,
+        ...runIds,
+        ...runIds,
+        ...runIds,
+      ) as WorkspaceRunHistoryTaskRow[];
+
+    for (const taskRow of taskRows) {
+      if (scope.task !== null && scope.task.id !== taskRow.id) {
+        continue;
+      }
+
+      const candidateRunIds = new Set(
+        [
+          taskRow.runId,
+          taskRow.checkoutRunId,
+          taskRow.executionRunId,
+        ].filter((value): value is string => value !== null),
+      );
+
+      for (const runId of candidateRunIds) {
+        const record = recordsByRunId.get(runId);
+
+        if (record === undefined) {
+          continue;
+        }
+
+        const hasTask = record.tasks.some((task) => task.id === taskRow.id);
+
+        if (!hasTask) {
+          record.tasks.push({
+            id: taskRow.id,
+            title: taskRow.title,
+            state: taskRow.state,
+            ownerRole: taskRow.ownerRole,
+            ownerDisplayName: taskRow.ownerDisplayName,
+          });
+        }
+      }
+    }
+
+    for (const message of messages) {
+      if (message.runId === null) {
+        continue;
+      }
+
+      const record = recordsByRunId.get(message.runId);
+
+      if (record === undefined) {
+        continue;
+      }
+
+      record.messages.push(message);
+    }
+
+    return Array.from(recordsByRunId.values()).map((record) => ({
+      projectId: record.projectId,
+      workspaceId: record.workspaceId,
+      runId: record.runId,
+      status: record.status,
+      summary: record.summary,
+      startedAt: record.startedAt,
+      endedAt: record.endedAt,
+      tasks: record.tasks,
+      messages: record.messages,
+    }));
+  }
+
   listWorkspaceAuditEvents(
     workspaceId: string,
     input: ListWorkspaceAuditEventsInput = {},
@@ -2110,39 +2342,12 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
     }
   }
 
-  listWorkspaceMessages(workspaceId: string): WorkspaceTimelineMessage[] {
-    const normalizedWorkspaceId = normalizeRequiredString(
-      workspaceId,
-      "workspaceId",
-    );
-
-    const rows = this.database
-      .prepare(
-        [
-          "SELECT",
-          "  id,",
-          "  project_id AS projectId,",
-          "  workspace_id AS workspaceId,",
-          "  actor_type AS actorType,",
-          "  actor_id AS actorId,",
-          "  content,",
-          "  created_at AS createdAt",
-          "FROM messages",
-          "WHERE workspace_id = ?",
-          "ORDER BY created_at ASC, rowid ASC",
-        ].join("\n"),
-      )
-      .all(normalizedWorkspaceId) as WorkspaceMessageRow[];
-
-    return rows.map((row) => ({
-      id: row.id,
-      projectId: row.projectId,
-      workspaceId: row.workspaceId,
-      actorType: row.actorType,
-      actorId: row.actorId,
-      content: row.content,
-      createdAt: row.createdAt,
-    }));
+  listWorkspaceMessages(
+    workspaceId: string,
+    input: ListWorkspaceRunHistoryInput = {},
+  ): WorkspaceTimelineMessage[] {
+    const scope = this.resolveWorkspaceRunHistoryQueryScope(workspaceId, input);
+    return this.queryWorkspaceMessages(scope);
   }
 
   appendWorkspaceMessage(
@@ -2197,6 +2402,7 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
         id: messageId,
         projectId: resolvedProjectId,
         workspaceId,
+        runId: null,
         actorType,
         actorId,
         content,
@@ -2437,6 +2643,7 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
           id: goalMessageId,
           projectId,
           workspaceId,
+          runId,
           actorType: "user",
           actorId: requestedByActorId,
           content: goal,
@@ -2446,6 +2653,7 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
           id: planMessageId,
           projectId,
           workspaceId,
+          runId,
           actorType: "agent",
           actorId: plan.projectManagerRoleKey,
           content: plan.message,
@@ -2512,6 +2720,90 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
       ) as WorkspaceTaskRow[];
 
     return rows.map(mapWorkspaceTaskRow);
+  }
+
+  private resolveWorkspaceRunHistoryQueryScope(
+    workspaceId: string,
+    input: ListWorkspaceRunHistoryInput,
+  ): WorkspaceRunHistoryQueryScope {
+    const normalizedWorkspaceId = normalizeRequiredString(
+      workspaceId,
+      "workspaceId",
+    );
+    const runId = normalizeOptionalString(input.runId);
+    const taskId = normalizeOptionalString(input.taskId);
+
+    if (taskId === undefined) {
+      return {
+        workspaceId: normalizedWorkspaceId,
+        runIds: runId === undefined ? null : [runId],
+        task: null,
+      };
+    }
+
+    const task = this.requireWorkspaceTask(taskId, normalizedWorkspaceId);
+    const taskRunIds = this.collectTaskRunIds(task);
+
+    return {
+      workspaceId: normalizedWorkspaceId,
+      runIds:
+        runId === undefined
+          ? taskRunIds
+          : taskRunIds.includes(runId)
+            ? [runId]
+            : [],
+      task,
+    };
+  }
+
+  private collectTaskRunIds(task: WorkspaceTaskRecord): string[] {
+    return Array.from(
+      new Set(
+        [
+          task.runId,
+          task.checkoutRunId,
+          task.executionRunId,
+          task.assignment?.runId ?? null,
+        ].filter((value): value is string => value !== null),
+      ),
+    );
+  }
+
+  private queryWorkspaceMessages(
+    scope: WorkspaceRunHistoryQueryScope,
+  ): WorkspaceTimelineMessage[] {
+    const whereClauses = ["workspace_id = ?"];
+    const parameters: string[] = [scope.workspaceId];
+
+    if (scope.runIds !== null) {
+      if (scope.runIds.length === 0) {
+        return [];
+      }
+
+      whereClauses.push(`run_id IN (${scope.runIds.map(() => "?").join(", ")})`);
+      parameters.push(...scope.runIds);
+    }
+
+    const rows = this.database
+      .prepare(
+        [
+          "SELECT",
+          "  id,",
+          "  project_id AS projectId,",
+          "  workspace_id AS workspaceId,",
+          "  run_id AS runId,",
+          "  actor_type AS actorType,",
+          "  actor_id AS actorId,",
+          "  content,",
+          "  created_at AS createdAt",
+          "FROM messages",
+          `WHERE ${whereClauses.join(" AND ")}`,
+          "ORDER BY created_at ASC, rowid ASC",
+        ].join("\n"),
+      )
+      .all(...parameters) as WorkspaceMessageRow[];
+
+    return rows.map(mapWorkspaceMessageRow);
   }
 
   private requireWorkspaceTask(
@@ -2867,6 +3159,7 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
       id,
       projectId: input.projectId,
       workspaceId: input.workspaceId,
+      runId: input.runId,
       actorType: input.actorType,
       actorId: input.actorId,
       content: input.content,
