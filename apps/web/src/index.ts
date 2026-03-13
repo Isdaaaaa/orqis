@@ -1389,6 +1389,204 @@ function getWebAppHtml(): string {
     let auditTimelineFilters = createDefaultAuditTimelineFilters();
     let auditTimelineLoading = false;
     let auditTimelineError = "";
+    const workspaceContextStorageKey = "orqis.workspace-context.v1";
+    const workspaceContextProjectQueryKey = "projectId";
+    const workspaceContextSectionQueryKey = "section";
+    const workspaceContextThreadQueryKey = "thread";
+
+    const sectionToViewId = {
+      "main-chat": "main-chat",
+      files: "files",
+      "assigned-agents": "assigned-agents",
+      "audit-timeline": "audit-timeline",
+      "agent-threads": "thread-frontend",
+    };
+
+    const threadToViewId = {
+      frontend: "thread-frontend",
+      backend: "thread-backend",
+      reviewer: "thread-reviewer",
+    };
+
+    const viewToThread = {
+      "thread-frontend": "frontend",
+      "thread-backend": "backend",
+      "thread-reviewer": "reviewer",
+    };
+
+    const normalizeWorkspaceContextToken = (value) => {
+      if (typeof value !== "string") {
+        return "";
+      }
+
+      return value.trim().toLowerCase();
+    };
+
+    const normalizeWorkspaceContextProjectId = (value) => {
+      if (typeof value !== "string") {
+        return "";
+      }
+
+      return value.trim();
+    };
+
+    const resolveViewIdFromWorkspaceContext = (sectionValue, threadValue) => {
+      const normalizedSection = normalizeWorkspaceContextToken(sectionValue);
+      const normalizedThread = normalizeWorkspaceContextToken(threadValue);
+
+      if (
+        normalizedSection === "agent-threads" ||
+        (normalizedSection.length === 0 && normalizedThread.length > 0)
+      ) {
+        return threadToViewId[normalizedThread] ?? "thread-frontend";
+      }
+
+      return sectionToViewId[normalizedSection] ?? "main-chat";
+    };
+
+    const resolveSectionFromViewId = (viewId) => {
+      if (viewId.startsWith("thread-")) {
+        return "agent-threads";
+      }
+
+      return viewId;
+    };
+
+    const resolveThreadFromViewId = (viewId) => {
+      return viewToThread[viewId] ?? "";
+    };
+
+    const readWorkspaceContextFromUrl = () => {
+      const searchParams = new URLSearchParams(window.location.search);
+      const projectId = normalizeWorkspaceContextProjectId(
+        searchParams.get(workspaceContextProjectQueryKey),
+      );
+      const section = normalizeWorkspaceContextToken(
+        searchParams.get(workspaceContextSectionQueryKey),
+      );
+      const thread = normalizeWorkspaceContextToken(
+        searchParams.get(workspaceContextThreadQueryKey),
+      );
+
+      return {
+        projectId: projectId.length > 0 ? projectId : undefined,
+        section: section.length > 0 ? section : undefined,
+        thread: thread.length > 0 ? thread : undefined,
+      };
+    };
+
+    const readWorkspaceContextFromStorage = () => {
+      try {
+        const rawValue = window.localStorage.getItem(workspaceContextStorageKey);
+
+        if (rawValue === null || rawValue.length === 0) {
+          return {};
+        }
+
+        const parsedValue = JSON.parse(rawValue);
+
+        if (
+          parsedValue === null ||
+          typeof parsedValue !== "object" ||
+          Array.isArray(parsedValue)
+        ) {
+          return {};
+        }
+
+        const projectId = normalizeWorkspaceContextProjectId(parsedValue.projectId);
+        const section = normalizeWorkspaceContextToken(parsedValue.section);
+        const thread = normalizeWorkspaceContextToken(parsedValue.thread);
+
+        return {
+          projectId: projectId.length > 0 ? projectId : undefined,
+          section: section.length > 0 ? section : undefined,
+          thread: thread.length > 0 ? thread : undefined,
+        };
+      } catch (_error) {
+        return {};
+      }
+    };
+
+    const resolveInitialWorkspaceContext = () => {
+      const storageContext = readWorkspaceContextFromStorage();
+      const urlContext = readWorkspaceContextFromUrl();
+      const projectId = urlContext.projectId ?? storageContext.projectId;
+      const section = urlContext.section ?? storageContext.section;
+      const thread = urlContext.thread ?? storageContext.thread;
+
+      return {
+        projectId,
+        viewId: resolveViewIdFromWorkspaceContext(section, thread),
+      };
+    };
+
+    const getWorkspaceContextSnapshot = () => {
+      const normalizedProjectId =
+        normalizeWorkspaceContextProjectId(selectedProjectId);
+      const section = resolveSectionFromViewId(activeViewId);
+      const thread = resolveThreadFromViewId(activeViewId);
+
+      return {
+        projectId: normalizedProjectId.length > 0 ? normalizedProjectId : undefined,
+        section,
+        thread: thread.length > 0 ? thread : undefined,
+      };
+    };
+
+    const persistWorkspaceContext = () => {
+      const context = getWorkspaceContextSnapshot();
+
+      try {
+        const localState = {
+          section: context.section,
+        };
+
+        if (context.projectId !== undefined) {
+          localState.projectId = context.projectId;
+        }
+
+        if (context.thread !== undefined) {
+          localState.thread = context.thread;
+        }
+
+        window.localStorage.setItem(
+          workspaceContextStorageKey,
+          JSON.stringify(localState),
+        );
+      } catch (_error) {
+        // ignore localStorage failures (for example private browsing restrictions)
+      }
+
+      const nextUrl = new URL(window.location.href);
+
+      if (context.projectId === undefined) {
+        nextUrl.searchParams.delete(workspaceContextProjectQueryKey);
+      } else {
+        nextUrl.searchParams.set(
+          workspaceContextProjectQueryKey,
+          context.projectId,
+        );
+      }
+
+      nextUrl.searchParams.set(workspaceContextSectionQueryKey, context.section);
+
+      if (context.thread === undefined) {
+        nextUrl.searchParams.delete(workspaceContextThreadQueryKey);
+      } else {
+        nextUrl.searchParams.set(workspaceContextThreadQueryKey, context.thread);
+      }
+
+      const nextRelativeUrl =
+        nextUrl.pathname +
+        (nextUrl.search.length > 0 ? nextUrl.search : "") +
+        nextUrl.hash;
+      const currentRelativeUrl =
+        window.location.pathname + window.location.search + window.location.hash;
+
+      if (nextRelativeUrl !== currentRelativeUrl) {
+        window.history.replaceState(null, "", nextRelativeUrl);
+      }
+    };
 
     const setStatus = (message, isError = false) => {
       status.textContent = message;
@@ -2666,6 +2864,7 @@ function getWebAppHtml(): string {
           projectSelect.value = project.projectId;
           renderProjectRail();
           updateSelectedProjectState();
+          persistWorkspaceContext();
 
           try {
             if (isTimelineView(activeViewId)) {
@@ -2816,6 +3015,7 @@ function getWebAppHtml(): string {
         renderProjectRail();
         updateSelectedProjectState();
         renderMessages([]);
+        persistWorkspaceContext();
         return null;
       }
 
@@ -2836,6 +3036,7 @@ function getWebAppHtml(): string {
       projectSelect.value = selectedProjectId;
       renderProjectRail();
       updateSelectedProjectState();
+      persistWorkspaceContext();
       return getSelectedProject();
     };
 
@@ -2850,6 +3051,10 @@ function getWebAppHtml(): string {
       projects = Array.isArray(payload.projects) ? payload.projects : [];
 
       const selectedProject = renderProjectOptions(preferredProjectId ?? projectSelect.value);
+
+      if (activeViewId === "assigned-agents") {
+        await loadAgentConfiguration(false);
+      }
 
       if (selectedProject === null) {
         return false;
@@ -3177,6 +3382,7 @@ function getWebAppHtml(): string {
 
       activeViewId = viewId;
       applyView();
+      persistWorkspaceContext();
 
       if (isTimelineView(activeViewId)) {
         await reloadTimeline();
@@ -3247,6 +3453,7 @@ function getWebAppHtml(): string {
         selectedProjectId = projectSelect.value;
         renderProjectRail();
         updateSelectedProjectState();
+        persistWorkspaceContext();
 
         if (isTimelineView(activeViewId)) {
           await reloadTimeline();
@@ -3379,6 +3586,13 @@ function getWebAppHtml(): string {
       }
     });
 
+    const initialWorkspaceContext = resolveInitialWorkspaceContext();
+    activeViewId = initialWorkspaceContext.viewId;
+
+    if (initialWorkspaceContext.projectId !== undefined) {
+      selectedProjectId = initialWorkspaceContext.projectId;
+    }
+
     applyView();
 
     void loadSession()
@@ -3387,7 +3601,7 @@ function getWebAppHtml(): string {
           return false;
         }
 
-        return loadProjects();
+        return loadProjects(initialWorkspaceContext.projectId);
       })
       .then((hasProjects) => {
         if (hasProjects === false) {

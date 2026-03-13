@@ -97,6 +97,7 @@ Current runtime behavior:
 - Authenticated user approval decisions are available at `POST /api/workspaces/:workspaceId/tasks/:taskId/approval`, which resolve outputs as `approved`, `rejected`, or `revision_requested`, write audit-backed approval updates, move guarded task/run state forward when allowed, and append Project Manager-visible follow-up messages to the timeline.
 - The Main Chat workspace shell now includes a `Task Approval Loop` panel that loads workspace tasks, captures output submission payloads, and applies `approved` / `revision_requested` / `rejected` decisions without manual runtime API calls.
 - The workspace shell now includes an `Audit Timeline` section that renders append-only workflow events and supports in-UI filters for actor, entity, and run/task/approval correlation.
+- Workspace context is now persisted in both URL query params (`projectId`, `section`, `thread`) and local browser state, so refresh restores the selected project, section, and agent thread.
 - Authenticated audit timeline reads are available at `GET /api/workspaces/:workspaceId/audit-events`, with optional query filters: `actorType`, `actorId`, `entityType`, `entityId`, `runId`, `taskId`, `approvalId`, and `limit` (`1..500`, default `200`).
 - The web runtime now serves project APIs at `GET/POST /api/projects`, creating one persistent workspace mapping per project.
 - The landing UI supports project creation, project selection, and timeline loading for the selected project's workspace.
