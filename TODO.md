@@ -299,6 +299,7 @@ Safe to defer:
   - Acceptance criteria: timeline and run drill-down flows read issue/task-centric run history through one shared query contract.
   - Summary: Added shared `taskId`/`runId` query helpers in persistence so timeline message reads and run-history drill-down reads resolve through one issue/task-centric filtering contract.
   - Summary (follow-up): Exposed authenticated `GET /api/workspaces/:workspaceId/run-history` plus shared message-query filtering, then added persistence/runtime regression coverage that asserts both endpoints return aligned filtered histories.
+  - Summary (review fix): Scoped run-history run lookups to the requested workspace and added cross-workspace isolation regressions so `runId` filters cannot leak runs across workspace boundaries.
   - Changed: `apps/web/src/persistence.ts`, `apps/web/src/index.ts`, `apps/web/test/timeline-persistence.test.ts`, `apps/web/test/runtime.test.ts`, `README.md`, `TODO.md`.
 
 - [ ] Align workspace agent-thread navigation with saved role mappings

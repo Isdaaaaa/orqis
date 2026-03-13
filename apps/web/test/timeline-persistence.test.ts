@@ -794,6 +794,9 @@ describe("@orqis/web workspace timeline persistence", () => {
         const project = store.createProject({
           name: "Run History Query Contract Project",
         });
+        const secondProject = store.createProject({
+          name: "Run History Query Isolation Project",
+        });
         const plan = store.createProjectManagerPlan({
           workspaceId: project.workspaceId,
           projectId: project.projectId,
@@ -860,6 +863,11 @@ describe("@orqis/web workspace timeline persistence", () => {
           store.listWorkspaceRunHistory(project.workspaceId, {
             taskId: backendTask.id,
             runId: "run-unrelated",
+          }),
+        ).toEqual([]);
+        expect(
+          store.listWorkspaceRunHistory(secondProject.workspaceId, {
+            runId: plan.runId,
           }),
         ).toEqual([]);
       } finally {

@@ -1436,6 +1436,33 @@ describe("@orqis/web runtime", () => {
           throw new Error("expected project details for run-history API assertions");
         }
 
+        const createSecondProjectResponse = await fetch(
+          `${runtime.baseUrl}/api/projects`,
+          {
+            method: "POST",
+            headers: withSessionCookie(sessionCookie, {
+              "content-type": "application/json",
+            }),
+            body: JSON.stringify({
+              name: "Run History API Isolation Project",
+            }),
+          },
+        );
+        const createSecondProjectBody = (await createSecondProjectResponse.json()) as {
+          project?: {
+            projectId: string;
+            workspaceId: string;
+          };
+        };
+
+        expect(createSecondProjectResponse.status).toBe(201);
+
+        const secondProject = createSecondProjectBody.project;
+
+        if (secondProject === undefined) {
+          throw new Error("expected second project details for run-history isolation assertions");
+        }
+
         const createPlanResponse = await fetch(
           `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(createdProject.workspaceId)}/planner/runs`,
           {
@@ -1578,6 +1605,21 @@ describe("@orqis/web runtime", () => {
         expect(mismatchedRunResponse.status).toBe(200);
         expectNoStoreCacheControl(mismatchedRunResponse);
         expect(mismatchedRunBody.history).toEqual([]);
+
+        const crossWorkspaceRunHistoryResponse = await fetch(
+          `${runtime.baseUrl}/api/workspaces/${encodeURIComponent(secondProject.workspaceId)}/run-history?runId=${encodeURIComponent(planRunId)}`,
+          {
+            headers: withSessionCookie(sessionCookie),
+          },
+        );
+        const crossWorkspaceRunHistoryBody =
+          (await crossWorkspaceRunHistoryResponse.json()) as {
+            history?: Array<unknown>;
+          };
+
+        expect(crossWorkspaceRunHistoryResponse.status).toBe(200);
+        expectNoStoreCacheControl(crossWorkspaceRunHistoryResponse);
+        expect(crossWorkspaceRunHistoryBody.history).toEqual([]);
       } finally {
         await runtime.stop();
         await cleanup();

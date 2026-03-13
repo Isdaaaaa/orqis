@@ -1631,11 +1631,12 @@ class SqliteWorkspaceTimelineStore implements WorkspaceTimelineStore {
           "  started_at AS startedAt,",
           "  ended_at AS endedAt",
           "FROM runs",
-          `WHERE id IN (${runIds.map(() => "?").join(", ")})`,
+          "WHERE workspace_id = ?",
+          `  AND id IN (${runIds.map(() => "?").join(", ")})`,
           "ORDER BY created_at ASC, rowid ASC",
         ].join("\n"),
       )
-      .all(...runIds) as WorkspaceRunHistoryRunRow[];
+      .all(scope.workspaceId, ...runIds) as WorkspaceRunHistoryRunRow[];
 
     for (const runRow of runRows) {
       recordsByRunId.set(runRow.id, {
