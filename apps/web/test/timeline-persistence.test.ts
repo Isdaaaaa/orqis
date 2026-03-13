@@ -782,6 +782,103 @@ describe("@orqis/web workspace timeline persistence", () => {
   );
 
   it(
+    "shares one issue/task-centric run-history query contract for timeline and run drill-down reads",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "orqis-web-run-history-"));
+      const databaseFilePath = join(tempDir, "run-history.db");
+      const store = createWorkspaceTimelineStore({
+        databaseFilePath,
+      });
+
+      try {
+        const project = store.createProject({
+          name: "Run History Query Contract Project",
+        });
+        const secondProject = store.createProject({
+          name: "Run History Query Isolation Project",
+        });
+        const plan = store.createProjectManagerPlan({
+          workspaceId: project.workspaceId,
+          projectId: project.projectId,
+          goal: "implement: ship shared run history query helpers",
+          requestedByActorId: "owner",
+        });
+        const backendTask = plan.tasks.find(
+          (task) => task.ownerRole === "backend_agent",
+        );
+
+        if (backendTask === undefined) {
+          throw new Error("expected backend task for run-history assertions");
+        }
+
+        await store.claimTaskExecution({
+          workspaceId: project.workspaceId,
+          taskId: backendTask.id,
+          runId: plan.runId,
+          ownerType: "agent",
+          ownerId: "backend_agent",
+        });
+
+        await store.submitTaskOutput({
+          workspaceId: project.workspaceId,
+          taskId: backendTask.id,
+          runId: plan.runId,
+          ownerType: "agent",
+          ownerId: "backend_agent",
+          output: "Implemented shared run history query helper wiring.",
+        });
+
+        const taskTimeline = store.listWorkspaceMessages(project.workspaceId, {
+          taskId: backendTask.id,
+        });
+        const taskRunHistory = store.listWorkspaceRunHistory(project.workspaceId, {
+          taskId: backendTask.id,
+        });
+
+        expect(taskTimeline.length).toBeGreaterThan(0);
+        expect(taskTimeline.every((message) => message.runId === plan.runId)).toBe(true);
+        expect(taskRunHistory).toHaveLength(1);
+        expect(taskRunHistory[0]).toMatchObject({
+          runId: plan.runId,
+          status: "waiting_approval",
+        });
+        expect(taskRunHistory[0]?.tasks).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              id: backendTask.id,
+            }),
+          ]),
+        );
+        expect(taskRunHistory[0]?.messages.map((message) => message.id)).toEqual(
+          taskTimeline.map((message) => message.id),
+        );
+
+        expect(
+          store.listWorkspaceMessages(project.workspaceId, {
+            taskId: backendTask.id,
+            runId: "run-unrelated",
+          }),
+        ).toEqual([]);
+        expect(
+          store.listWorkspaceRunHistory(project.workspaceId, {
+            taskId: backendTask.id,
+            runId: "run-unrelated",
+          }),
+        ).toEqual([]);
+        expect(
+          store.listWorkspaceRunHistory(secondProject.workspaceId, {
+            runId: plan.runId,
+          }),
+        ).toEqual([]);
+      } finally {
+        store.close();
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+    WORKSPACE_CI_INTEGRATION_TIMEOUT_MS,
+  );
+
+  it(
     "lists role-mapped tasks and rejects competing execution claims deterministically",
     async () => {
       const tempDir = await mkdtemp(join(tmpdir(), "orqis-web-task-claims-"));

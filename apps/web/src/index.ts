@@ -17,6 +17,7 @@ import {
   createWorkspaceTimelineStore,
   type AppendWorkspaceTimelineMessageInput,
   type ListWorkspaceAuditEventsInput,
+  type ListWorkspaceRunHistoryInput,
   type ReleaseTaskExecutionInput,
   type SaveAgentConfigurationInput,
   type SubmitTaskOutputInput,
@@ -39,6 +40,8 @@ const SESSION_PATH = "/api/session";
 const PROJECTS_PATH = "/api/projects";
 const AGENT_CONFIGURATION_PATH = "/api/settings/agent-configuration";
 const WORKSPACE_MESSAGES_PATH_PATTERN = /^\/api\/workspaces\/([^/]+)\/messages$/;
+const WORKSPACE_RUN_HISTORY_PATH_PATTERN =
+  /^\/api\/workspaces\/([^/]+)\/run-history$/;
 const WORKSPACE_TASKS_PATH_PATTERN = /^\/api\/workspaces\/([^/]+)\/tasks$/;
 const WORKSPACE_AUDIT_EVENTS_PATH_PATTERN =
   /^\/api\/workspaces\/([^/]+)\/audit-events$/;
@@ -3997,6 +4000,22 @@ function parseListWorkspaceAuditEventsQuery(
   };
 }
 
+function parseListWorkspaceRunHistoryQuery(
+  request: IncomingMessage,
+): { ok: true; value: ListWorkspaceRunHistoryInput } {
+  const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+  const runId = normalizeOptionalString(requestUrl.searchParams.get("runId"));
+  const taskId = normalizeOptionalString(requestUrl.searchParams.get("taskId"));
+
+  return {
+    ok: true,
+    value: {
+      runId,
+      taskId,
+    },
+  };
+}
+
 function parseTaskExecutionClaimBody(
   body: unknown,
 ):
@@ -4473,6 +4492,27 @@ function parseAgentConfigurationBody(
 
 function resolveWorkspaceMessagesPath(pathname: string): string | undefined {
   const match = pathname.match(WORKSPACE_MESSAGES_PATH_PATTERN);
+
+  if (match === null) {
+    return undefined;
+  }
+
+  const encodedWorkspaceId = match[1];
+
+  if (encodedWorkspaceId === undefined) {
+    return undefined;
+  }
+
+  try {
+    const decodedWorkspaceId = decodeURIComponent(encodedWorkspaceId);
+    return decodedWorkspaceId.trim().length > 0 ? decodedWorkspaceId : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveWorkspaceRunHistoryPath(pathname: string): string | undefined {
+  const match = pathname.match(WORKSPACE_RUN_HISTORY_PATH_PATTERN);
 
   if (match === null) {
     return undefined;
@@ -5272,6 +5312,64 @@ async function handleWorkspaceAuditEventsRoute(
   });
 }
 
+async function handleWorkspaceRunHistoryRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  context: RuntimeRequestContext,
+  workspaceId: string,
+): Promise<void> {
+  if (request.method === "GET") {
+    const parsedQuery = parseListWorkspaceRunHistoryQuery(request);
+
+    try {
+      const filters: ListWorkspaceRunHistoryInput = {
+        runId: parsedQuery.value.runId,
+        taskId: parsedQuery.value.taskId,
+      };
+      const history = context.timelineStore.listWorkspaceRunHistory(
+        workspaceId,
+        filters,
+      );
+
+      writeJson(response, 200, {
+        workspaceId,
+        filters,
+        history,
+      });
+      return;
+    } catch (error) {
+      if (error instanceof WorkspaceTimelineValidationError) {
+        writeJson(response, 400, {
+          error: error.message,
+        });
+        return;
+      }
+
+      if (error instanceof WorkspaceTimelineNotFoundError) {
+        writeJson(response, 404, {
+          error: error.message,
+        });
+        return;
+      }
+
+      if (error instanceof WorkspaceTimelineConflictError) {
+        writeJson(response, 409, {
+          error: error.message,
+        });
+        return;
+      }
+
+      throw error;
+    }
+  }
+
+  response.setHeader("allow", "GET");
+  writeJson(response, 405, {
+    error: "Method Not Allowed",
+    method: request.method ?? "UNKNOWN",
+  });
+}
+
 async function handleWorkspaceTaskCheckoutRoute(
   request: IncomingMessage,
   response: ServerResponse,
@@ -5767,17 +5865,41 @@ async function handleWorkspaceMessagesRoute(
   workspaceId: string,
 ): Promise<void> {
   if (request.method === "GET") {
+    const parsedQuery = parseListWorkspaceRunHistoryQuery(request);
+
     try {
-      const messages = context.timelineStore.listWorkspaceMessages(workspaceId);
+      const filters: ListWorkspaceRunHistoryInput = {
+        runId: parsedQuery.value.runId,
+        taskId: parsedQuery.value.taskId,
+      };
+      const messages = context.timelineStore.listWorkspaceMessages(
+        workspaceId,
+        filters,
+      );
 
       writeJson(response, 200, {
         workspaceId,
+        filters,
         messages,
       });
       return;
     } catch (error) {
       if (error instanceof WorkspaceTimelineValidationError) {
         writeJson(response, 400, {
+          error: error.message,
+        });
+        return;
+      }
+
+      if (error instanceof WorkspaceTimelineNotFoundError) {
+        writeJson(response, 404, {
+          error: error.message,
+        });
+        return;
+      }
+
+      if (error instanceof WorkspaceTimelineConflictError) {
+        writeJson(response, 409, {
           error: error.message,
         });
         return;
@@ -6066,6 +6188,18 @@ async function handleRequest(
       response,
       context,
       auditWorkspaceId,
+    );
+    return;
+  }
+
+  const runHistoryWorkspaceId = resolveWorkspaceRunHistoryPath(pathname);
+
+  if (runHistoryWorkspaceId !== undefined) {
+    await handleWorkspaceRunHistoryRoute(
+      request,
+      response,
+      context,
+      runHistoryWorkspaceId,
     );
     return;
   }
